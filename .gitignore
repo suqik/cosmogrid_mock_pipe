@@ -5,3 +5,4 @@
 catalogs/
 .vscode/
 .jupyter.log
+.ipynb_checkpoints/
