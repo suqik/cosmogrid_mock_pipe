@@ -1,0 +1,28 @@
+[workspace]
+channels = ["conda-forge"]
+name = "CosmoGrid"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+numpy = "==1.26.0"
+pyccl = ">=3.2,<4"
+healpy = ">=1.18.1,<2"
+jupyter = ">=1.1.1,<2"
+notebook = ">=7.4.1,<8"
+h5py = ">=3.13.0,<4"
+halotools = ">=0.9.3,<0.10"
+mpi4py = ">=3.1.6,<4"
+openmpi = { version = "4.1.*", build = "external_*" }
+treecorr = ">=5.1.1,<6"
+namaster = ">=2.4,<3"
+
+[pypi-dependencies]
+cython = ">=3.1.0, <4"
+cartopy = ">=0.23.0, <0.24"
+loguru = ">=0.7.3, <0.8"
+pymangle = ">=0.9.3, <0.10"
+dsigma = ">=1.0.1, <2"
+mcfit = ">=0.0.22, <0.0.23"
