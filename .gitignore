@@ -6,3 +6,4 @@ catalogs/
 .vscode/
 .jupyter.log
 .ipynb_checkpoints/
+demo.ipynb
