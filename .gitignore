@@ -9,3 +9,5 @@ catalogs/
 demo.ipynb
 hod/
 results/
+*ipynb
+hod_fit/
