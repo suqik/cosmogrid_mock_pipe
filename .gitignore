@@ -11,3 +11,4 @@ hod/
 results/
 *ipynb
 hod_fit/
+__pycache__/
