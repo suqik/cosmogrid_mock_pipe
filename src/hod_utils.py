@@ -4,6 +4,7 @@ Utils to apply HOD. Totally from HODOR.
 import os
 import sys
 import configparser
+from typing import Union
 from copy import copy
 import numpy as np
 from scipy.special import erf
@@ -139,7 +140,7 @@ class ModelClass():
     return rsd_shift
 
 
-  def populate_mock(self, param_vals:np.ndarray|dict, ref_num_dens, indx=0, ifcheck=True):
+  def populate_mock(self, param_vals:Union[np.ndarray,dict], ref_num_dens, indx=0, ifcheck=True):
     """ Populate the halo catalog with galaxies for different seeds """
     if self.verbose:
       print('\nSTATUS: Populate the halo catalog with galaxies...')
@@ -151,7 +152,7 @@ class ModelClass():
       for key, val in param_vals.items():
         self.model_instance.param_dict[key] = val
 
-    print(self.model_instance.param_dict)
+    # print(self.model_instance.param_dict)
 
     ### Function which tells you how many central and satellite galaxies were alocated to the FastPM halo catalog.
     #self.check_galaxy_types(self.init_seed)

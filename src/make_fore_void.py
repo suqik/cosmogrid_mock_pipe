@@ -13,28 +13,31 @@ from io_func import *
 
 ''' Setup '''
 ### fiducial cosmology
-### Note this has nothing to do with the cosmology of the simulation
-cosmo_ccl = ccl.CosmologyVanillaLCDM()
-
-### void size parameters
-tot_rv_min = 15. # Mpc/h
-tot_rv_max = 26. # Mpc/h
-dRv = 1.0 # Mpc/h
+cosmo_label = 1
+sim_fmt = "/data3/suchen/CosmoGridV1/grid/cosmo_{:06d}/run_0/"
+cosmo_ccl = get_cosmo_from_file(sim_fmt.format(cosmo_label) + "params.yml", otype='ccl')
 
 ### file fmts
-basedir = '/home/suchen/Program/CosmoGrid/catalogs/Matched/'
-ifile = basedir + 'fore_gal.txt'
+basedir = '/home/suchen/Program/CosmoGrid/aux/'
+ifile = basedir + 'test_halo_lcone.npy'
 dive_input = "tmp_fore_gal_cart.txt"
 dive_output = "tmp_fore_void_cart.txt"
-ofile_fmt = '/home/suchen/Program/CosmoGrid/catalogs/Matched/fore_voids_rvbin{:d}.txt'
+ofile = '/home/suchen/Program/CosmoGrid/aux/test_void_lcone_w_boundary.npy'
 
 ''' Main '''
 start = datetime.datetime.now()
 ### Convert ra-dec to x-y-z
 logger.info("Convert ra-dec to x-y-z")
 
-tmp = np.loadtxt(ifile, dtype=fgal_type)
+# tmp = np.loadtxt(ifile, dtype=fgal_type)
+
+##### for test #####
+tmp = np.load(ifile)
+####################
+
 chi_radial = ccl.comoving_radial_distance(cosmo_ccl, 1./(1+tmp['z'])) # Mpc
+chi_min_mpc = chi_radial.min()
+chi_max_mpc = chi_radial.max()
 chi_radial *= cosmo_ccl.to_dict()["h"] # Mpc/h
 pos = hp.ang2vec(tmp['ra'], tmp['dec'], lonlat=True) # Actually norm of position
 pos = (pos.T * chi_radial).T
@@ -50,32 +53,19 @@ os.system(cmd)
 print(f"rm {dive_input}")
 os.system(f"rm {dive_input}")
 
-### Binning voids and convert to ra-dec
-logger.info("Binning voids")
-### initial void size bins
-rv_edges = np.arange(tot_rv_min, tot_rv_max+0.1*dRv, dRv)
-rv_mins = rv_edges[:-1]
-rv_maxs = rv_edges[1:]
-
 ### load void catalogs
-tmp = np.loadtxt(dive_output, dtype=dive_void_type)
+catalog = np.loadtxt(dive_output, dtype=dive_void_type)
+chi_radial = np.linalg.norm(catalog['pos'], axis=1) # Mpc/h
+chi_radial /= cosmo_ccl.to_dict()["h"] # Mpc
 
-catalogs = []
-for rv_min, rv_max in zip(rv_mins, rv_maxs):
-    mask = (tmp['Rv'] >= rv_min) & (tmp['Rv'] < rv_max)
-    catalogs.append(tmp[mask])
+cut = (chi_radial < chi_max_mpc) & (chi_radial > chi_min_mpc)
+catalog = catalog[cut]
+chi_radial = chi_radial[cut]
 
-del tmp
-
-logger.info("Transform to RADEC and save to file")
-### transform to swot input format and save to file
-for i, catalog in enumerate(catalogs):
-    chi_radial = np.linalg.norm(catalog['pos'], axis=1) # Mpc/h
-    chi_radial /= cosmo_ccl.to_dict()["h"] # Mpc
-    redshifts = 1./ccl.scale_factor_of_chi(cosmo_ccl, chi_radial) - 1.
-    ra, dec = hp.vec2ang(catalog['pos'], lonlat=True)
-    sigmaz = np.ones(len(ra))*0.001
-    np.savetxt(ofile_fmt.format(i), np.c_[ra, dec, redshifts, sigmaz], fmt="%.3f %.3f %.3f %.3f")
+redshifts = 1./ccl.scale_factor_of_chi(cosmo_ccl, chi_radial) - 1.
+ra, dec = hp.vec2ang(catalog['pos'], lonlat=True)
+weight = np.ones(len(ra))
+np.save(ofile, np.c_[ra, dec, redshifts, weight])
 
 print(f"rm {dive_output}")
 os.system(f"rm {dive_output}")

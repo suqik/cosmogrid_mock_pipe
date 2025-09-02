@@ -7,6 +7,7 @@ import healpy as hp
 import pyccl as ccl
 import h5py
 from astropy.io import fits
+from typing import Union
 from halotools.empirical_models import halo_mass_to_halo_radius, NFWProfile
 from halotools.sim_manager import UserSuppliedHaloCatalog
 
@@ -88,7 +89,7 @@ fgal_type = np.dtype(
 # >>>========================================================<<<
 
 # >>>==================    I/O functions   ==================<<<
-def get_cosmo_from_file(fname:str, otype="ccl") -> dict|ccl.Cosmology:
+def get_cosmo_from_file(fname:str, otype="ccl") -> Union[dict, ccl.Cosmology]:
     '''
     Get cosmology from PKDGrav3 config. Can transform to ccl format
 
@@ -129,7 +130,7 @@ def get_cosmo_from_file(fname:str, otype="ccl") -> dict|ccl.Cosmology:
 
     return outputs
 
-def get_pkd_halo_attrs(fname:str, attrs:str|list=["pos", "mass"], Lbox:float=None, redshift:float=None) -> dict:
+def get_pkd_halo_attrs(fname:str, attrs:Union[str,list]=["pos", "mass"], Lbox:float=None, redshift:float=None) -> dict:
     '''
     Get PKDGrav3 halo attributes.
     Special attrs are position, velocity and Mass. Mass are defined as virial mass.
@@ -292,7 +293,7 @@ def lcone_to_swot_type(lcone_pos:np.ndarray, cosmo:ccl.Cosmology, weight:np.ndar
     
     return outputs
 
-def load_raytracing_maps(fname:str, quantities:str|list=["gamma1", "gamma2"]) -> dict:
+def load_raytracing_maps(fname:str, quantities:Union[str, list]=["gamma1", "gamma2"]) -> dict:
     '''
     Load raytracing maps in Dorian output formats.
 
@@ -359,7 +360,7 @@ def loadFitsMaps(name:str) -> list:
 
     return maps
 
-def saveFitsFullMap(name:str, full:np.ndarray|list, comments:str|list=None, verbose:bool=True) -> None:
+def saveFitsFullMap(name:str, full:Union[np.ndarray, list], comments:Union[str, list]=None, verbose:bool=True) -> None:
     """
     Copy from SALMO code (Lin 2020).
 

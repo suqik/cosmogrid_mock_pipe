@@ -4,7 +4,8 @@ Utils usd in constructing foreground samples
 
 import numpy as np
 import healpy as hp
-from hod_utils import *
+from typing import Union, Tuple
+from .hod_utils import *
 
 # >>>===================   Calculate Halo Mass Function   ==================<<<
 def get_abundance(data, bins=10, isedge=True, bin_scale='linear', density=False):
@@ -55,7 +56,7 @@ def get_HMF(mass, bins, boxsize, isedge=False, bin_scale='linear', ifcum=True):
 # >>>=============================================================================<<<
 
 # >>>===================   Constructing foreground lightcone   ===================<<<
-def box_recenter(pos:np.ndarray, center:tuple|list|np.ndarray, boxsize:float) -> np.ndarray:
+def box_recenter(pos:np.ndarray, center:Union[tuple,list,np.ndarray], boxsize:float) -> np.ndarray:
     '''
     Re-center the coordinates `pos` to a box centered at `center` with edge length `boxsize`.
     
@@ -76,7 +77,7 @@ def box_recenter(pos:np.ndarray, center:tuple|list|np.ndarray, boxsize:float) ->
     local_pos = ((pos-np.array(center)*boxsize)+boxsize) % boxsize
     return local_pos
     
-def cut_shell_one_box(pos:np.ndarray, gid:np.ndarray, boxsize:float, shift:tuple|list|np.ndarray, rmin:float, rmax:float) -> np.ndarray:
+def cut_shell_one_box(pos:np.ndarray, gid:np.ndarray, boxsize:float, shift:Union[tuple,list,np.ndarray], rmin:float, rmax:float) -> np.ndarray:
     '''
     Cut out a shell within a given range from the coordinates.
 
@@ -178,7 +179,7 @@ def get_cross_box_indice(boxsize:float, chi_min:float, chi_max:float) -> np.ndar
 
     return indice_all
 
-def make_lightcone_tiles(position:np.ndarray, boxsize:float, chi_min:float, chi_max:float, ctr:tuple|list|np.ndarray|int=[0,0,0]) -> np.ndarray:
+def make_lightcone_tiles(position:np.ndarray, boxsize:float, chi_min:float, chi_max:float, ctr:Union[tuple,list,np.ndarray,int]=[0,0,0]) -> np.ndarray:
     '''
     Make a lightcone from the given coordinates.
 
@@ -265,6 +266,8 @@ def apply_boss_geometry(galcone, geom_polygon, masks, galcone_ids=None):
 
     if galcone_ids is not None:
         galcone_ids_out = galcone_ids[mask][select]
+    else:
+        galcone_ids_out = None
 
     for ipoly in range(len(masks)):
         mask = masks[ipoly].contains(galcone_boss["ra"], galcone_boss["dec"])
@@ -281,6 +284,8 @@ def apply_boss_lowze2e3_trim(galcone, lowz_polygon, galcone_ids=None):
     galcone_trimmed = galcone[trim]
     if galcone_ids is not None:
         galcone_ids_out = galcone_ids[trim]
+    else:
+        galcone_ids_out = None
     return galcone_trimmed, galcone_ids_out
 
 def apply_2dflens_geometry(galcone, mask_weight_maps, interp=True, galcone_ids=None):
@@ -295,6 +300,8 @@ def apply_2dflens_geometry(galcone, mask_weight_maps, interp=True, galcone_ids=N
     
     if galcone_ids is not None:
         galcone_ids_out = galcone_ids[select]
+    else:
+        galcone_ids_out = None
 
     if interp:
         galcone_2dflens["w"] = hp.get_interp_val(weight_map, galcone_2dflens["ra"], galcone_2dflens["dec"], lonlat=True)
@@ -321,7 +328,10 @@ def apply_nz_downsample(galcone, nofz_info, galcone_ids=None):
     downsample_rate = np.clip(downsample_rate, 0, 1)
     
     galcone_dsampled = []
-    galcone_ids_dsampled = []
+    if galcone_ids is not None:
+        galcone_ids_dsampled = []
+    else:
+        galcone_ids_dsampled = None
     number_in_bin = []
     for ibin in range(len(zedges)-1):
         zmin, zmax = zedges[ibin], zedges[ibin+1]
@@ -339,10 +349,7 @@ def apply_nz_downsample(galcone, nofz_info, galcone_ids=None):
     if galcone_ids is not None:
         galcone_ids_dsampled = np.concatenate(galcone_ids_dsampled)
 
-    if galcone_ids is not None:
-        return galcone_dsampled, galcone_ids_dsampled
-    else:
-        return galcone_dsampled
+    return galcone_dsampled, galcone_ids_dsampled
 
 def make_nofz_info(nofz_info, survey_name, zedges, shell_vol, nz_ref):
     nofz_info[survey_name] = {}
@@ -351,3 +358,70 @@ def make_nofz_info(nofz_info, survey_name, zedges, shell_vol, nz_ref):
     nofz_info[survey_name]['nz_ref'] = nz_ref
 
     return nofz_info
+
+def make_nofz_from_sample(samples:np.ndarray, bins:Union[int, list, tuple]=30, rng:tuple=None) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Generate histogram (x, pdf) from given sample.
+
+    Parameters:
+    ----------
+    samples : array-like
+        Array of samples.
+    bins : int or sequence, optional
+        Bins or edges of histogram
+    range : tuple, optional
+        (min, max), minimum and maximum of histogram range
+    
+    Return: q
+    ----------
+    x : ndarray
+        Bin center
+    pdf : ndarray
+        Normalized pdf
+    """
+    counts, bin_edges = np.histogram(samples, bins=bins, range=rng, density=False)
+    bin_widths = np.diff(bin_edges)
+    x = 0.5 * (bin_edges[:-1] + bin_edges[1:])  # bin center
+    pdf = counts / (np.sum(counts) * bin_widths)  # normalization
+
+    return x, pdf
+
+def sample_from_histogram(N:int, x:np.ndarray, pdf:np.ndarray) -> np.ndarray:
+    """
+    Sampling N samples from given histogram (x, pdf).
+
+    Parameters:
+    ----------
+    N : int
+        Number of samples.
+    x : array-like
+        Bin center of histogram
+    pdf : array-like
+        Pdf, can be normalized or not
+    
+    Return:
+    ----------
+    samples : ndarray
+        Sampled array.
+    """
+    x = np.asarray(x)
+    pdf = np.asarray(pdf)
+
+    # 归一化 pdf
+    pdf = pdf / np.sum(pdf)
+
+    # 计算CDF
+    cdf = np.cumsum(pdf)
+    cdf[-1] = 1.0  # 确保最后一个是1
+
+    # 在[0,1]生成N个随机数
+    u = np.random.rand(N)
+
+    # 通过CDF反演找到所在区间
+    indices = np.searchsorted(cdf, u)
+
+    # 在每个bin内做线性插值
+    bin_width = np.diff(x).mean()  # 假设等宽
+    samples = x[indices] + (np.random.rand(N) - 0.5) * bin_width
+
+    return samples

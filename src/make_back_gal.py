@@ -5,7 +5,7 @@ Random sampling galaxies from background shear map, and add shape noise
 
 import numpy as np
 import h5py
-from tqdm import trange
+# from tqdm import trange
 
 from io_func import *
 from mkback_utils import *
@@ -25,14 +25,14 @@ nofz_file_fmt = "catalogs/NOfZ/srcs/K1000_NS_V1.0.0A_ugriZYJHKs_photoz_SG_mask_L
 nz_tomo_bins = 5
 
 ''' output file info'''
-out_dir = "/home/suchen/Program/CosmoGrid/catalogs/Shape/"
-out_fmt = "cosmo_{:06d}/cosmo_{:06d}_run_0_kids_north_tomo{:d}_wo_noise.txt"
+out_dir = "/data2/suchen/CosmoGrid/Shape/"
+out_fmt = "cosmo_{:06d}_run_0_kids_north_tomo{:d}_wo_noise.txt"
 
 ''' main routine '''
 ### read shear map
 def read_shear_maps(cosmo_label:int, redshift_src_list:list) -> dict:
     shear_map_dict = {}
-    for ishell in trange(len(redshift_src_list)):
+    for ishell in range(len(redshift_src_list)):
         redshift_src = redshift_src_list[ishell]
 
         shear_map_dict[f"shell{ishell}"] = {}
@@ -51,9 +51,34 @@ def read_shear_maps(cosmo_label:int, redshift_src_list:list) -> dict:
     return shear_map_dict
 
 if __name__ == "__main__":
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+
     ### read shear maps
     import datetime
     start = datetime.datetime.now()
+
+    ### read cosmo labels
+    if rank == 0:
+        
+        logger.info("Read cosmo labels")
+
+        # with open("/data3/suchen/CosmoGridV1/grid/dirnames.txt", "r") as f:
+        with open("/data2/suchen/CosmoGrid/Shape/missing_cosmo_labels.txt", "r") as f:
+            dirnames = f.readlines()
+            cosmo_labels_tot = [int(i.strip("\n").split("_")[1]) for i in dirnames]
+
+        k, m = divmod(len(cosmo_labels_tot), size)
+        chunks = [cosmo_labels_tot[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] for i in range(size)]
+    else:
+        chunks = None
+
+    if rank == 0:
+        logger.info("Scattering labels")
+
+    cosmo_labels = comm.scatter(chunks, root=0)
 
     ### read mask
     logger.info("Load mask")
@@ -68,26 +93,26 @@ if __name__ == "__main__":
     mask = np.where(mask > 0, 1, 0)
 
     # ###############   For Test   #################
-    logger.info("Generate 8 rotated masks")
+    # logger.info("Generate 8 rotated masks")
 
-    nside = hp.npix2nside(len(mask))
-    rot_degrees_list = [
-        [0,50,0],
-        [90,0,-50],
-        [180,-50,0],
-        [270,0,50],
-        [0,-50,0],
-        [90,0,50],
-        [180,50,0],
-        [270,0,-50],
-    ]
+    # nside = hp.npix2nside(len(mask))
+    # rot_degrees_list = [
+    #     [0,50,0],
+    #     [90,0,-50],
+    #     [180,-50,0],
+    #     [270,0,50],
+    #     [0,-50,0],
+    #     [90,0,50],
+    #     [180,50,0],
+    #     [270,0,-50],
+    # ]
 
-    new_mask_list = []
-    for rot_degrees in rot_degrees_list:
-        new_mask = np.zeros_like(mask)
-        new_mask_pix = rotate_pix(np.argwhere(mask!=0).flatten(), nside=nside, rot_degrees=rot_degrees)
-        new_mask[new_mask_pix] = 1
-        new_mask_list.append(new_mask)
+    # new_mask_list = []
+    # for rot_degrees in rot_degrees_list:
+    #     new_mask = np.zeros_like(mask)
+    #     new_mask_pix = rotate_pix(np.argwhere(mask!=0).flatten(), nside=nside, rot_degrees=rot_degrees)
+    #     new_mask[new_mask_pix] = 1
+    #     new_mask_list.append(new_mask)
     # ###############################################
 
     ### read nofz
@@ -100,7 +125,7 @@ if __name__ == "__main__":
         nofz_dict[f'tomo{i}'] = make_nofz(tmp[:,0], tmp[:,1])
 
     # cosmo_label = 3
-    for cosmo_label in range(1,2):
+    for cosmo_label in cosmo_labels:
         logger.info("Process cosmo {:06d}\n".format(cosmo_label))
         logger.info("Load shear maps")
 
@@ -109,33 +134,33 @@ if __name__ == "__main__":
         ### generate background galaxies for each tomographic bin
         logger.info("Generate background galaxies")
 
-        # for itomo in range(2,3):
+        for itomo in range(nz_tomo_bins):
             
-        #     logger.info("Tomographic bin {}".format(itomo+1))
+            logger.info("Tomographic bin {}".format(itomo+1))
 
-        #     bg_galcat = gen_gal_positions(ngal_list[itomo], mask, nofz_dict[f'tomo{itomo+1}'])
-        #     # bg_galcat = get_gal_shear(bg_galcat, shear_map_dict, sigma_e=sigma_e, seed=seed+1)
-        #     bg_galcat = get_gal_shear(bg_galcat, shear_map_dict, sigma_e=None, seed=seed+1)
+            bg_galcat = gen_gal_positions(ngal_list[itomo], mask, nofz_dict[f'tomo{itomo+1}'])
+            # bg_galcat = get_gal_shear(bg_galcat, shear_map_dict, sigma_e=sigma_e, seed=seed+1)
+            bg_galcat = get_gal_shear(bg_galcat, shear_map_dict, sigma_e=None, seed=seed+1)
 
-        #     np.savetxt(out_dir + out_fmt.format(cosmo_label, itomo+1), bg_galcat, fmt='%.3f %.3f %.5f %.5f %.8f %.8f %.3f')
+            np.savetxt(out_dir + out_fmt.format(cosmo_label, itomo+1), bg_galcat, fmt='%.3f %.3f %.5f %.5f %.8f %.8f %.3f')
 
         # ############################      For Test      ###########################
-        out_fmt = "cosmo_{:06d}_run_0_kids_north_tomo{:d}_wo_noise_part{}.txt"
-        for ipart in range(8):
+        # out_fmt = "cosmo_{:06d}_run_0_kids_north_tomo{:d}_wo_noise_part{}.txt"
+        # for ipart in range(8):
             
-            logger.info(f"Generate Part {ipart}")
+        #     logger.info(f"Generate Part {ipart}")
             
-            curr_mask = new_mask_list[ipart]
+        #     curr_mask = new_mask_list[ipart]
 
-            for itomo in range(2,3):
+        #     for itomo in range(2,3):
                 
-                logger.info("Tomographic bin {}".format(itomo+1))
+        #         logger.info("Tomographic bin {}".format(itomo+1))
 
-                bg_galcat = gen_gal_positions(ngal_list[itomo], curr_mask, nofz_dict[f'tomo{itomo+1}'])
-                # bg_galcat = get_gal_shear(bg_galcat, shear_map_dict, sigma_e=sigma_e, seed=seed+1)
-                bg_galcat = get_gal_shear(bg_galcat, shear_map_dict, sigma_e=None, seed=seed+1)
+        #         bg_galcat = gen_gal_positions(ngal_list[itomo], curr_mask, nofz_dict[f'tomo{itomo+1}'])
+        #         # bg_galcat = get_gal_shear(bg_galcat, shear_map_dict, sigma_e=sigma_e, seed=seed+1)
+        #         bg_galcat = get_gal_shear(bg_galcat, shear_map_dict, sigma_e=None, seed=seed+1)
 
-                np.savetxt(out_dir + out_fmt.format(cosmo_label, itomo+1, ipart+1), bg_galcat, fmt='%.3f %.3f %.5f %.5f %.8f %.8f %.3f')
+        #         np.savetxt(out_dir + out_fmt.format(cosmo_label, itomo+1, ipart+1), bg_galcat, fmt='%.3f %.3f %.5f %.5f %.8f %.8f %.3f')
         # ############################################################################
 
     logger.info("Done.")

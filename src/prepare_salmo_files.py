@@ -7,8 +7,8 @@ import numpy as np
 import h5py
 import healpy as hp
 
-from io_func import *
-from mkback_utils import *
+from .io_func import *
+from .mkback_utils import *
 
 ''' simulation info '''
 sim_fmt = "/data3/suchen/CosmoGridV1/raytrace/cosmo_{:06d}/nside0512/raytracing_z{:.2f}_nufft.hdf5"
