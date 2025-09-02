@@ -18,9 +18,10 @@ mpi4py = ">=3.1.6,<4"
 openmpi = { version = "4.1.*", build = "external_*" }
 treecorr = ">=5.1.1,<6"
 namaster = ">=2.4,<3"
+ultranest = ">=4.4.0,<5"
 
 [pypi-dependencies]
-cython = ">=3.1.0, <4"
+cython = "*"
 cartopy = ">=0.23.0, <0.24"
 loguru = ">=0.7.3, <0.8"
 pymangle = ">=0.9.3, <0.10"
