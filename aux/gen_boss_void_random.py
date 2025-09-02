@@ -24,9 +24,9 @@ survey_part = "lowzcmass"
 
 if cattype == "boss":
     catname = 'wb'
-    fnamebase = f"aux/catalog/{cattype}_{survey_part}_void_{catname}"
+    fnamebase = f"aux/catalogs/{cattype}_{survey_part}_void_{catname}"
 if cattype == "bossdata":
-    fnamebase = f"aux/catalog/{cattype}_{survey_part}_void"
+    fnamebase = f"aux/catalogs/{cattype}_{survey_part}_void"
 
 logger.info(f"Load void catalog from {fnamebase}.npy")
 

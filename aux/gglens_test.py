@@ -12,11 +12,11 @@ cosmo_label = 1
 cosmo_ccl = get_cosmo_from_file(f"/data3/suchen/CosmoGridV1/grid/cosmo_{cosmo_label:06d}/run_0/params.yml")
 
 catname = 'wb'
-mock_gal = np.load(f"aux/catalog/boss_lowze3_void_{catname}.npy")
+mock_gal = np.load(f"aux/catalogs/boss_lowze3_void_{catname}.npy")
 
 mock_gal_north = mock_gal[mock_gal['dec']>-15]
 
-rand_gal = np.load(f"aux/catalog/boss_lowze3_void_rand_{catname}.npy")
+rand_gal = np.load(f"aux/catalogs/boss_lowze3_void_rand_{catname}.npy")
 
 logger.info(f"Data: {len(mock_gal_north)} Random: {len(rand_gal)}")
 
