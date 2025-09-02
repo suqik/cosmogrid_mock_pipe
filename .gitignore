@@ -7,3 +7,4 @@ catalogs/
 .jupyter.log
 .ipynb_checkpoints/
 demo.ipynb
+cfgs/hod/
