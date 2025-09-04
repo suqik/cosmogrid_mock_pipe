@@ -10,4 +10,4 @@
 
 export OMP_NUM_THREADS=1
 
-pixi run mpirun -np 5 --map-by core --bind-to core python src/make_back_gal.py
+pixi run mpirun -np 5 --map-by core --bind-to core python make_back_gal.py
