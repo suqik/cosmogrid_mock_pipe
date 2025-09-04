@@ -105,7 +105,7 @@ param_prior_high = np.array([15, 3.0, 15.5, 10.0, 2.0])
 ''' output files '''
 # out_dir = "/home/suchen/Program/CosmoGrid/catalogs/HOD/"
 out_dir = "/data2/suchen/CosmoGrid/HOD/"
-out_fmt = "cosmo_{:06d}_run_0_HOD_{:d}_run_{:d}_{:s}.txt"
+out_fmt = "cosmo_{:06d}_run_0_HOD_{:d}_run_{:d}_{:s}.npy"
 
 ''' main routines '''
 def load_halocat(cosmo_label, ofmt='hod'):
@@ -413,7 +413,8 @@ if __name__ == "__main__":
 
                     galcone_output = make_survey(gal_pos, masks, cosmo_ccl, nofz_info, check_repeat=False)
 
-                    np.savetxt(out_dir + out_fmt.format(cosmo_label, ihod, iseed, "boss_north_2dflens_south"), galcone_output, fmt="%.4f %.4f %.4f %4f")
+                    # np.savetxt(out_dir + out_fmt.format(cosmo_label, ihod, iseed, "boss_north_2dflens_south"), galcone_output, fmt="%.4f %.4f %.4f %4f")
+                    np.save(out_dir + out_fmt.format(cosmo_label, ihod, iseed, "boss_north_2dflens_south"), galcone_output)
 
             logger.info('Loops end')
 
