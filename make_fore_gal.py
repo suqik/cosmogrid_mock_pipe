@@ -303,7 +303,7 @@ if __name__ == "__main__":
             cosmo_labels_tot = [int(i.strip("\n").split("_")[1]) for i in dirnames]
 
         ######## For Test #######
-        # cosmo_labels_tot = [1]
+        # cosmo_labels_tot = [1,2,3,4]
         #########################
         k, m = divmod(len(cosmo_labels_tot), size)
         chunks = [cosmo_labels_tot[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] for i in range(size)]
@@ -407,10 +407,24 @@ if __name__ == "__main__":
         # make_survey([dict_of_gsamples], masks, cosmo_ccl, nofz_info, check_repeat=True, cosmo_label=cosmo_label, outname="full_sky")
         ########################################################################################################
 
-    ### save hod parameter dict
-    logger.info(f"Save HOD parameters")
-    with open(hod_param_out, "w+") as f:
-        json.dump(hod_param_dict_tot, f)
+    all_hod_params = comm.gather(hod_param_dict_tot, root=0)
+    all_failed_cosmo = comm.gather(failed_cosmo, root=0)
+
+    if rank == 0:
+        ### save hod parameter dict
+        logger.info(f"Save HOD parameters")
+        final_hod_params = {}
+        for d in all_hod_params:
+            final_hod_params.update(d)
+
+        with open(hod_param_out, "w+") as f:
+            json.dump(final_hod_params, f, indent=4)
+
+        # final_failed_cosmo = []
+        # for l in all_failed_cosmo:
+        #     final_failed_cosmo.extend(l)
+        # if len(final_failed_cosmo) > 0:
+        #     logger.warning(f"Failed cosmologies: {final_failed_cosmo}")
 
     end = datetime.datetime.now()
     logger.info(f"Time elapsed: {end-start}")
