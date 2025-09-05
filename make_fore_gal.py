@@ -14,15 +14,6 @@ from loguru import logger
 from utils.io_func import *
 from utils.mkfore_utils import *
 
-logger.remove()
-
-### debug
-if len(sys.argv) > 1:
-    logger.add(sink=sys.stdout, level="DEBUG")
-### release
-else:
-    logger.add(sink=sys.stdout, level="INFO")
-
 ''' simulation info '''
 sim_fmt = "/data3/suchen/CosmoGridV1/grid/cosmo_{:06d}/run_0/"
 halo_fmt = "pkd_halos/CosmoML.{:05d}.fofstats.0"
@@ -34,7 +25,6 @@ lb_z_tb = np.loadtxt(lb_z_file)
 Lbox = 900.0
 Nside = 832 # Npart = Nside**3
 redshift = lb_z_tb[redshift_label,1]
-# redshift_before = lb_z_tb[redshift_label-1,1]
 ### FIXME: for test
 zmin = 0.2
 zmax = 0.4
@@ -76,7 +66,7 @@ nz_2dflens_fname = nz_fbase + "nbar_2dFLens_south_data.dat"
 ''' HOD params '''
 model = 2
 num_params = 6 # Number of parameters of HOD model
-nhod_per_cosmo = 2 # Number of varied HOD parameter values per cosmology
+nhod_per_cosmo = 10 # Number of varied HOD parameter values per cosmology
 model_params_names = 'logMcut', 'sigma_logM', 'logM1', 'k', 'alpha', 'fic'
 Num_ptcl_requirement = 12
 verbose = True
@@ -85,17 +75,7 @@ init_seed = 33000
 z_space = False
 ngal_ref = 3.5e-4 # BOSS LRG mean number density
 
-# model_params_dict = {
-#     'logMcut': 12.89,
-#     'sigma_logM': 0.27,
-#     'logM1': 13.2,
-#     'k': 0.65,
-#     'alpha': 1.20,
-#     'fic': 1.0
-# }
-
 test_model_param = np.array([12.59102404,  2.10923402, 14.06049531,  0.07197861,  0.25447211, 1.0])
-# test_model_param = np.array([12.51460811,  0.05693276, 13.49879432,  7.52035039,  1.36215534, 1.0])
 model_params_dict = {}
 for i in range(num_params):
     model_params_dict[model_params_names[i]] = test_model_param[i]
@@ -104,7 +84,6 @@ param_prior_low = np.array([12.5, 1e-5, 12.5, 0.0, 0.0])
 param_prior_high = np.array([15, 3.0, 15.5, 10.0, 2.0])
 
 ''' output files '''
-# out_dir = "/home/suchen/Program/CosmoGrid/catalogs/HOD/"
 out_dir = "/data2/suchen/CosmoGrid/HOD/"
 out_fmt = "cosmo_{:06d}_run_0_HOD_{:d}_run_{:d}_{:s}.npy"
 hod_param_out = "cfgs/hod/hod_5params_dict.json"
@@ -187,10 +166,6 @@ def apply_hod(cosmo_label, halo_file, hod_halo_cat, OmegaM, model_params_dict, i
     return dict_of_gsamples
 
 def find_hod_params_alive(cosmo_label, halo_mass, num_pool=10000, seedini=9782):
-    # ## make hod-type halo catalog
-    # halo_file, hod_halo_cat, OmegaM = make_hod_halocat(cosmo_label)
-    # halo_mass = hod_halo_cat.halo_mvir
-
     ## Sample HOD parameters
     count = 0
     idx = 0
@@ -199,40 +174,28 @@ def find_hod_params_alive(cosmo_label, halo_mass, num_pool=10000, seedini=9782):
     hod_params_pool = lhc_sampler.random(n=num_pool)
     hod_params_pool = qmc.scale(hod_params_pool, param_prior_low, param_prior_high)
 
-    hod_params_alive = []
-
     ## Main loop to find HOD parameters that matches reference galaxy number density
+    hod_params_alive = []
     FAILED_FLAG = False
     while(count < nhod_per_cosmo):
-        drop_flag = False
-
         try:
             curr_hod_params = hod_params_pool[idx,:]
         except:
-            logger.warning("cosmo_{:06d} cannot find enough HOD parameters that matches reference galaxy number density.".format(cosmo_label))
+            logger.warning("cosmo_{:06d} cannot find HOD parameters that matches reference galaxy number density.".format(cosmo_label))
             FAILED_FLAG = True
             break
 
         ## update fic
         if model == 2:
             f_ic = find_fic(halo_mass, curr_hod_params)
-            if f_ic>0 and f_ic <= 1.0:
+            ## FIXME: lower bound of f_ic may need careful consideration.
+            if f_ic > 0.5 and f_ic <= 1.0:
                 count += 1
+                idx += 1
+                hod_params_alive.append(np.append(curr_hod_params, f_ic))
             else:
-                drop_flag = True
-        
-        idx += 1
-            
-        if drop_flag:
-            continue
-        else:
-            logger.info(f"fic = {f_ic}")
-            hod_params_alive.append(np.append(curr_hod_params, f_ic))
-
-    # hod_params_alive = np.asarray(hod_params_alive)
-
-    # logger.info(f"Save HOD parameters to file: {hod_param_file}")
-    # np.savetxt(hod_param_file, hod_params_alive)
+                idx += 1
+                continue
 
     if not FAILED_FLAG:
         return hod_params_alive
@@ -255,9 +218,7 @@ def make_survey(gal_pos:np.ndarray, masks:dict, cosmo_ccl:ccl.Cosmology, nofz_in
     ### Type of galcone: first 3 are galaxy Positions in Cartesian coordinates, 
     ### and the last one are the IDs of galaxies.
     galcone = make_lightcone_tiles(gal_pos, boxsize=Lbox, chi_min=chi_min, chi_max=chi_max)
-    
-    # galcone_ra, galcone_dec = hp.vec2ang(galcone[:,:-1], lonlat=True)
-    # galcone_chi = np.linalg.norm(galcone[:,:-1], axis=1)
+
     galcone_ra, galcone_dec, galcone_z, phys_cut = Cart2Sph(cosmo_ccl, pos=galcone[:,:-1])
     galcone_id = galcone[phys_cut][:,-1]
     
@@ -296,7 +257,6 @@ def make_survey(gal_pos:np.ndarray, masks:dict, cosmo_ccl:ccl.Cosmology, nofz_in
         galcone_boss['survey'] = igeom_poly
 
         galcone_boss_tot.append(galcone_boss)
-        logger.debug(f"{len(galcone_boss)}")
         galcone_id_boss_tot.append(galcone_id_boss)
     
     galcone_boss = np.concatenate(galcone_boss_tot)
@@ -313,7 +273,6 @@ def make_survey(gal_pos:np.ndarray, masks:dict, cosmo_ccl:ccl.Cosmology, nofz_in
 
     galcone_id = np.append(galcone_id_boss, galcone_id_2dflens)
     galcone_output = np.append(galcone_boss, galcone_2dflens)
-    logger.debug(f"{len(galcone_output)}")
     
     ### check replication
     if check_repeat:
@@ -323,6 +282,11 @@ def make_survey(gal_pos:np.ndarray, masks:dict, cosmo_ccl:ccl.Cosmology, nofz_in
     del galcone_id
 
     return galcone_output
+
+def clear_print(str):
+    print(">>>" + "="*50 + "<<<")
+    print(str)
+    print(">>>" + "="*50 + "<<<")
 
 if __name__ == "__main__":
     from mpi4py import MPI
@@ -334,12 +298,12 @@ if __name__ == "__main__":
         
         logger.info("Read cosmo labels")
 
-        # with open("/data3/suchen/CosmoGridV1/grid/dirnames.txt", "r") as f:
-        #     dirnames = f.readlines()
-        #     cosmo_labels_tot = [int(i.strip("\n").split("_")[1]) for i in dirnames]
+        with open("/data3/suchen/CosmoGridV1/grid/dirnames.txt", "r") as f:
+            dirnames = f.readlines()
+            cosmo_labels_tot = [int(i.strip("\n").split("_")[1]) for i in dirnames]
 
         ######## For Test #######
-        cosmo_labels_tot = [2]
+        # cosmo_labels_tot = [1]
         #########################
         k, m = divmod(len(cosmo_labels_tot), size)
         chunks = [cosmo_labels_tot[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] for i in range(size)]
@@ -427,7 +391,6 @@ if __name__ == "__main__":
                     gal_pos = np.c_[x_c, y_c, z_c]
 
                     galcone_output = make_survey(gal_pos, masks, cosmo_ccl, nofz_info, check_repeat=False)
-                    # np.savetxt(out_dir + out_fmt.format(cosmo_label, ihod, iseed, "boss_north_2dflens_south"), galcone_output, fmt="%.4f %.4f %.4f %4f")
                     ## save as binary file
                     np.save(out_dir + out_fmt.format(cosmo_label, ihod, iseed, "boss_north_2dflens_south"), galcone_output)
 
