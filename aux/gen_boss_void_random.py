@@ -8,7 +8,7 @@ from loguru import logger
 import sys
 sys.path.append('/home/suchen/Program/CosmoGrid/')
 
-from src.mkfore_utils import make_nofz_from_sample, sample_from_histogram
+from utils.mkfore_utils import make_nofz_from_sample, sample_from_histogram
 
 fgal_type = np.dtype(
     [

@@ -7,7 +7,7 @@ from astropy.table import Table
 import treecorr
 from loguru import logger
 
-from src.io_func import get_cosmo_from_file
+from utils.io_func import get_cosmo_from_file
 
 ''' general setup '''
 cosmo_label = 1

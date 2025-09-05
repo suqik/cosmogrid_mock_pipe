@@ -10,8 +10,8 @@ import pymangle
 import sys
 from loguru import logger
 
-from src.io_func import *
-from src.mkfore_utils import *
+from utils.io_func import *
+from utils.mkfore_utils import *
 
 ''' simulation info '''
 sim_fmt = "/data3/suchen/CosmoGridV1/grid/cosmo_{:06d}/run_0/"

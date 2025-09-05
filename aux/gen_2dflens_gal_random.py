@@ -6,7 +6,9 @@ import sys
 sys.path.append("/home/suchen/Program/CosmoGrid/")
 import numpy as np
 import healpy as hp
-from src.io_func import loadFitsMaps
+
+from utils.io_func import loadFitsMaps
+
 import datetime
 from loguru import logger
 

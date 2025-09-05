@@ -1,9 +1,9 @@
 import numpy as np
 from astropy.table import Table
-
 import sys
 sys.path.append("/home/suchen/Program/CosmoGrid/")
-from src.io_func import get_cosmo_from_file
+
+from utils.io_func import get_cosmo_from_file
 
 from loguru import logger
 

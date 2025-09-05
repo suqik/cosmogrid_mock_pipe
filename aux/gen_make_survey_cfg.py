@@ -6,7 +6,7 @@ import sys
 sys.path.append("/home/suchen/Program/CosmoGrid/")
 import numpy as np
 
-from src.io_func import get_cosmo_from_file
+from utils.io_func import get_cosmo_from_file
 
 make_survey_param = {
     "f---translate": [-900, -900, 0],

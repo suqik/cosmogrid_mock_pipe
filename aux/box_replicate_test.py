@@ -5,8 +5,8 @@ import numpy as np
 import healpy as hp
 from matplotlib import pyplot as plt
 
-from src.io_func import *
-from src.mkback_utils import *
+from utils.io_func import *
+from utils.mkback_utils import *
 
 import pymaster as nmt
 
