@@ -2,6 +2,7 @@
 Basic I/O functions
 '''
 
+import json
 import numpy as np
 import healpy as hp
 import pyccl as ccl
@@ -142,6 +143,44 @@ def get_cosmo_from_file(fname:str, otype="ccl") -> Union[dict, ccl.Cosmology]:
         raise NotImplementedError(f"Output type {otype} not implemented!")
 
     return outputs
+
+def get_hod_params(fname:str, otype:str='dict') -> Union[dict, np.ndarray]:
+    '''
+    Get HOD parameters from file.
+
+    Parameters:
+    ----------
+    fname: str
+        Input file name.
+
+    otype: str
+        Output type. Can be "dict" or "array".
+
+    Returns:
+    -------
+    outputs: dict
+        A dictionary of HOD parameters.
+    '''
+
+    with open(fname, "r") as f:
+        hod_params = json.load(f)
+    
+    if otype == "array":
+        hod_params_arr = []
+        for icosmo in len(hod_params):
+            nhod_in_curr_cosmo = len(hod_params[f'cosmo{icosmo:06d}'])
+            for ihod in len(nhod_in_curr_cosmo):
+                hod_params_arr.append(hod_params[f'cosmo{icosmo:06d}'][ihod])
+        
+        hod_params_arr = np.asarray(hod_params_arr)
+        
+        return hod_params_arr
+    
+    elif otype == "dict":
+        return hod_params
+    else:
+        raise ValueError(f"Output type {otype} not implemented!")
+
 
 def get_pkd_halo_attrs(fname:str, attrs:Union[str,list]=["pos", "mass"], Lbox:float=None, redshift:float=None) -> dict:
     '''
