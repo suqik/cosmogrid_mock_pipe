@@ -86,7 +86,7 @@ def Cart2Sph(cosmo_ccl:ccl.Cosmology, **kwargs):
         raise IOError("Need either `pos` or `x y z` as inputs!")
     
     chi_radial = np.linalg.norm(pos, axis=1) / hubble # Mpc
-    phys_cut = (chi_radial > 1e-5) & (chi_radial < 1e4)
+    phys_cut = (chi_radial > 1e-5) & (chi_radial < 5000)
     pos = pos[phys_cut]
 
     redshifts = 1./ccl.scale_factor_of_chi(cosmo_ccl, chi_radial[phys_cut]) - 1.
