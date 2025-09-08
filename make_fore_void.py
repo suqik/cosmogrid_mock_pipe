@@ -125,9 +125,9 @@ if __name__ == "__main__":
         hod_params_dict = get_hod_params(hod_param_fname)
         cosmo_labels_tot = []
 
-         for icosmo_str in hod_params_dict.keys():
-             if len(hod_params_dict[icosmo_str]) > 0:
-                 cosmo_labels_tot.append(int(icosmo_str[5:]))
+        for icosmo_str in hod_params_dict.keys():
+            if len(hod_params_dict[icosmo_str]) > 0:
+                cosmo_labels_tot.append(int(icosmo_str[5:]))
 
         # ############# read legacy cosmology #############
         # with open("/data2/suchen/CosmoGrid/diff_cosmo.txt", "r") as f:
