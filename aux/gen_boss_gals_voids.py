@@ -159,27 +159,27 @@ def apply_boss_lowz_nz_dsample(galcone_boss, nofz_boss, galcone_id_boss=None):
     galcone_boss, galcone_id_boss = apply_nz_downsample(galcone_boss, nofz_boss, galcone_ids=galcone_id_boss)
     return galcone_boss, galcone_id_boss
 
-def find_void(halo_pos, boxsize=None):
-    exec_path = "/home/suchen/applications/DIVE/DIVE"
-    dive_input = "aux/tmp_halo.dat"
-    np.savetxt(dive_input, halo_pos, fmt='%.3f')
-    dive_output = "aux/tmp_void.dat"
-    cmd = exec_path + " -i " + dive_input + " -o " + dive_output
-    if boxsize is not None:
-        cmd += " -u " + str(boxsize)
-    print(cmd)
-    os.system(cmd)
-    print(f"rm {dive_input}")
-    os.system(f"rm {dive_input}")
+# def find_void(halo_pos, boxsize=None):
+#     exec_path = "/home/suchen/applications/DIVE/DIVE"
+#     dive_input = "aux/tmp_halo.dat"
+#     np.savetxt(dive_input, halo_pos, fmt='%.3f')
+#     dive_output = "aux/tmp_void.dat"
+#     cmd = exec_path + " -i " + dive_input + " -o " + dive_output
+#     if boxsize is not None:
+#         cmd += " -u " + str(boxsize)
+#     print(cmd)
+#     os.system(cmd)
+#     print(f"rm {dive_input}")
+#     os.system(f"rm {dive_input}")
 
-    void_info = np.loadtxt(dive_output)
-    void_pos = void_info[:,:-1]
-    void_radius = void_info[:,-1]
+#     void_info = np.loadtxt(dive_output)
+#     void_pos = void_info[:,:-1]
+#     void_radius = void_info[:,-1]
 
-    print(f"rm {dive_output}")
-    os.system(f"rm {dive_output}")
+#     print(f"rm {dive_output}")
+#     os.system(f"rm {dive_output}")
 
-    return void_pos, void_radius
+#     return void_pos, void_radius
 
 if __name__ == "__main__":
     ''' >>>==========   pre-defined routines   ============<<< '''
@@ -228,9 +228,9 @@ if __name__ == "__main__":
 
         ### save
         logger.info("Save to file.")
-        np.save("aux/catalog/boss_lowzcmass.npy", boss_lowzcmass_halo)
-        np.save("aux/catalog/boss_lowze2.npy", boss_lowze2_halo)
-        np.save("aux/catalog/boss_lowze3.npy", boss_lowze3_halo)
+        np.save("aux/catalogs/boss_lowzcmass.npy", boss_lowzcmass_halo)
+        np.save("aux/catalogs/boss_lowze2.npy", boss_lowze2_halo)
+        np.save("aux/catalogs/boss_lowze3.npy", boss_lowze3_halo)
     ################################################################################################
 
     #############################   find void without boundary effect   ############################
@@ -270,12 +270,13 @@ if __name__ == "__main__":
 
         ### save
         logger.info("Save to file.")
-        np.save("aux/catalog/boss_lowzcmass_void_wob.npy", boss_lowzcmass_void)
-        np.save("aux/catalog/boss_lowze2_void_wob.npy", boss_lowze2_void)
-        np.save("aux/catalog/boss_lowze3_void_wob.npy", boss_lowze3_void)
+        np.save("aux/catalogs/boss_lowzcmass_void_wob.npy", boss_lowzcmass_void)
+        np.save("aux/catalogs/boss_lowze2_void_wob.npy", boss_lowze2_void)
+        np.save("aux/catalogs/boss_lowze3_void_wob.npy", boss_lowze3_void)
     #################################################################################################
 
     ###############################   find void with boundary effect   ##############################
+    ### TODO: replace sph2cart/cart2sph to functions in `mkfore_utils.py`
     if run_name == "find_void_wb":
 
         def sph2cart(sph_pos, cosmo_ccl):
@@ -328,10 +329,10 @@ if __name__ == "__main__":
         
         import os
 
-        if os.path.exists("aux/catalog/boss_lowzcmass.npy") and os.path.exists("aux/catalog/boss_lowze2.npy") and os.path.exists("aux/catalog/boss_lowze3.npy"):
-            boss_lowzcmass_halo = np.load("aux/catalog/boss_lowzcmass.npy")
-            boss_lowze2_halo = np.load("aux/catalog/boss_lowze2.npy")
-            boss_lowze3_halo = np.load("aux/catalog/boss_lowze3.npy")
+        if os.path.exists("aux/catalogs/boss_lowzcmass.npy") and os.path.exists("aux/catalog/boss_lowze2.npy") and os.path.exists("aux/catalog/boss_lowze3.npy"):
+            boss_lowzcmass_halo = np.load("aux/catalogs/boss_lowzcmass.npy")
+            boss_lowze2_halo = np.load("aux/catalogs/boss_lowze2.npy")
+            boss_lowze3_halo = np.load("aux/catalogs/boss_lowze3.npy")
         else:
             ### load pkdgrav halo file
             logger.info("Load pkdgrav halo file.")
@@ -353,9 +354,9 @@ if __name__ == "__main__":
 
             ### save
             logger.info("Save to file.")
-            np.save("aux/catalog/boss_lowzcmass.npy", boss_lowzcmass_halo)
-            np.save("aux/catalog/boss_lowze2.npy", boss_lowze2_halo)
-            np.save("aux/catalog/boss_lowze3.npy", boss_lowze3_halo)
+            np.save("aux/catalogs/boss_lowzcmass.npy", boss_lowzcmass_halo)
+            np.save("aux/catalogs/boss_lowze2.npy", boss_lowze2_halo)
+            np.save("aux/catalogs/boss_lowze3.npy", boss_lowze3_halo)
 
         ### find void in lightcone data
         logger.info("Find void in lightcone data.")
@@ -369,12 +370,12 @@ if __name__ == "__main__":
 
         ### save
         logger.info("Save to file.")
-        np.save("aux/catalog/boss_lowzcmass_void_wb.npy", boss_lowzcmass_void)
-        np.save("aux/catalog/boss_lowze2_void_wb.npy", boss_lowze2_void)
-        np.save("aux/catalog/boss_lowze3_void_wb.npy", boss_lowze3_void)
+        np.save("aux/catalogs/boss_lowzcmass_void_wb.npy", boss_lowzcmass_void)
+        np.save("aux/catalogs/boss_lowze2_void_wb.npy", boss_lowze2_void)
+        np.save("aux/catalogs/boss_lowze3_void_wb.npy", boss_lowze3_void)
     #################################################################################################
 
-    ###############################  TODO: find void in BOSS LOWZ-E3 data   ##############################
+    ###############################  find void in BOSS LOWZ-E3 data   ###############################
     if run_name == "find_boss_void":
         
         from astropy.table import Table
@@ -391,43 +392,27 @@ if __name__ == "__main__":
 
             return boss_data
 
-        def sph2cart(sph_pos, cosmo_ccl):
-            chi_radial = ccl.comoving_radial_distance(cosmo_ccl, 1./(1+sph_pos['z'])) # Mpc
-            chi_radial *= cosmo_ccl.to_dict()["h"] # Mpc/h
-            pos = hp.ang2vec(sph_pos['ra'], sph_pos['dec'], lonlat=True) # Actually norm of position
-            pos = (pos.T * chi_radial).T
-
-            return pos
-
-        def cart2sph(cart_pos, cosmo_ccl):
-            chi_radial = np.linalg.norm(cart_pos, axis=1) # Mpc/h
-            chi_radial /= cosmo_ccl.to_dict()["h"] # Mpc
-            redshifts = 1./ccl.scale_factor_of_chi(cosmo_ccl, chi_radial) - 1.
-            ra, dec = hp.vec2ang(cart_pos, lonlat=True)
-            pos = np.empty(len(ra), dtype=fgal_type)
-            pos['ra'] = ra
-            pos['dec'] = dec
-            pos['z'] = redshifts
-            pos['w'] = np.ones(len(ra))
-
-            return pos
-        
-        def find_void_from_lcone(halo_lcone, cosmo_ccl):
+        def find_void_from_lcone(halo_lcone, cosmo_ccl, survey:int=0):
             zmin = halo_lcone['z'].min()
             zmax = halo_lcone['z'].max()
-            print(zmin, zmax)
-            halo_lcone_cart = sph2cart(halo_lcone, cosmo_ccl)
+            halo_lcone_cart = Sph2Cart(cosmo_ccl, ra=halo_lcone['ra'], dec=halo_lcone['dec'], z=halo_lcone['z'])
             void_pos, void_radius = find_void(halo_lcone_cart, boxsize=None)
             void_rcut = (void_radius > 15) & (void_radius < 25)
             void_pos = void_pos[void_rcut]
             void_radius = void_radius[void_rcut]
 
-            void_lcone = cart2sph(void_pos, cosmo_ccl)
+            v_ra, v_dec, v_z, phys_cut = Cart2Sph(cosmo_ccl, pos=void_pos)
+            void_lcone = np.empty(len(v_ra), dtype=fvoid_type)
+            void_lcone['ra'] = v_ra
+            void_lcone['dec'] = v_dec
+            void_lcone['z'] = v_z
+            void_lcone['Rv'] = void_radius[phys_cut]
+            void_lcone['survey'] = survey
+
             void_zcut = (void_lcone['z'] > zmin) & (void_lcone['z'] < zmax)
             void_lcone = void_lcone[void_zcut]
-            void_radius = void_radius[void_zcut]
 
-            return void_lcone, void_radius
+            return void_lcone
         
         ### initialize cosmology
         logger.info("Assume Planck 2015 cosmology.")
@@ -448,17 +433,19 @@ if __name__ == "__main__":
 
         ### find void in lightcone data
         logger.info("Find void in lightcone data.")
-        boss_lowzcmass_void, boss_lowzcmass_void_radius = find_void_from_lcone(boss_lowzcmass_halo, cosmo_ccl)
-        boss_lowze2_void, boss_lowze2_void_radius = find_void_from_lcone(boss_lowze2_halo, cosmo_ccl)
-        boss_lowze3_void, boss_lowze3_void_radius = find_void_from_lcone(boss_lowze3_halo, cosmo_ccl)
+        boss_lowzcmass_void = find_void_from_lcone(boss_lowzcmass_halo, cosmo_ccl, survey=0)
+        boss_lowze2_void = find_void_from_lcone(boss_lowze2_halo, cosmo_ccl, survey=1)
+        boss_lowze3_void = find_void_from_lcone(boss_lowze3_halo, cosmo_ccl, survey=2)
         
         boss_lowzcmass_void, _ = apply_boss_lowz_cut(boss_lowzcmass_void, boss_geoms['boss_gemo'][0], boss_geoms['boss_masks'], galcone_id=None)
         boss_lowze2_void, _ = apply_boss_lowze2e3_cut(boss_lowze2_void, boss_geoms['boss_gemo'][1], boss_geoms['boss_masks'], boss_geoms['boss_gemo'][-1], galcone_id=None)
         boss_lowze3_void, _ = apply_boss_lowze2e3_cut(boss_lowze3_void, boss_geoms['boss_gemo'][2], boss_geoms['boss_masks'], boss_geoms['boss_gemo'][-1], galcone_id=None)
 
+        boss_lowzcmasstot_void = np.append(boss_lowzcmass_void, np.append(boss_lowze2_void, boss_lowze3_void))
+
+        del boss_lowzcmass_void, boss_lowze2_void, boss_lowze3_void
+
         ### save
         logger.info("Save to file.")
-        np.save("aux/catalog/bossdata_lowzcmass_void.npy", boss_lowzcmass_void)
-        np.save("aux/catalog/bossdata_lowze2_void.npy", boss_lowze2_void)
-        np.save("aux/catalog/bossdata_lowze3_void.npy", boss_lowze3_void)
+        np.save("aux/catalogs/bossdata_lowzcmasstot_void.npy", boss_lowzcmasstot_void)
     #################################################################################################
