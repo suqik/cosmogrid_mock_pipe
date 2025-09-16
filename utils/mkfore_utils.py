@@ -3,6 +3,7 @@ Utils usd in constructing foreground samples
 '''
 
 import numpy as np
+from scipy.stats import gaussian_kde
 import healpy as hp
 import pyccl as ccl
 from typing import Union, Tuple
@@ -56,7 +57,7 @@ def get_HMF(mass, bins, boxsize, isedge=False, bin_scale='linear', ifcum=True):
         return mctr_list, logNm_list
 # >>>=============================================================================<<<
 
-def Sph2Cart(cosmo_ccl:ccl.Cosmology, **kwargs):
+def Sph2Cart(cosmo_ccl:ccl.Cosmology, **kwargs) -> np.ndarray:
     hubble = cosmo_ccl.to_dict()['h']
     if 'pos' in kwargs.keys():
         ra = kwargs['pos'][:,0]
@@ -76,7 +77,7 @@ def Sph2Cart(cosmo_ccl:ccl.Cosmology, **kwargs):
 
     return pos
 
-def Cart2Sph(cosmo_ccl:ccl.Cosmology, **kwargs):
+def Cart2Sph(cosmo_ccl:ccl.Cosmology, **kwargs) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     hubble = cosmo_ccl.to_dict()['h']
     if 'pos' in kwargs.keys():
         pos = kwargs['pos']
@@ -465,6 +466,32 @@ def sample_from_histogram(N:int, x:np.ndarray, pdf:np.ndarray) -> np.ndarray:
     samples = x[indices] + (np.random.rand(N) - 0.5) * bin_width
 
     return samples
+
+def logit_transform(x, a, b):
+    return np.log((x - a) / (b - x))
+
+def logit_inverse(y, a, b):
+    ey = np.exp(y)
+    return (a + b * ey) / (1 + ey)
+
+def bounded_kde_transform(data, bounds):
+    (xmin, xmax), (ymin, ymax) = bounds
+    # 对每个维度做 logit 变换
+    tx = logit_transform(data[:,0], xmin, xmax)
+    ty = logit_transform(data[:,1], ymin, ymax)
+    tdata = np.vstack([tx, ty])
+    kde = gaussian_kde(tdata)
+    return kde
+
+def resample_bounded(kde, N, bounds):
+    """
+    从 bounded KDE 采样
+    """
+    (xmin, xmax), (ymin, ymax) = bounds
+    t_samples = kde.resample(N).T
+    xs = logit_inverse(t_samples[:,0], xmin, xmax)
+    ys = logit_inverse(t_samples[:,1], ymin, ymax)
+    return xs, ys
 
 # >>>=============================================================================<<<
 
