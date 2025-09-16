@@ -8,16 +8,8 @@ from loguru import logger
 import sys
 sys.path.append('/home/suchen/Program/CosmoGrid/')
 
-from utils.mkfore_utils import make_nofz_from_sample, sample_from_histogram
-
-fgal_type = np.dtype(
-    [
-        ("ra", "f4"), 
-        ("dec", "f4"), 
-        ("z", "f4"), 
-        ("w", "f4")
-    ]
-)
+from utils.io_func import *
+from utils.mkfore_utils import bounded_kde_transform, resample_bounded
 
 # >>> ========================     For test    =========================
 cattype = "bossdata" # `boss` for simulation and `bossdata` for observational data
@@ -55,12 +47,17 @@ if cattype == "bossdata":
 logger.info(f"Use method {method} to generate void random catalog")
 
 nvoid = len(vcat)
-zmin = vcat['z'].min()
-zmax = vcat['z'].max()
+zmin = 0.2
+zmax = 0.4
+Rvmin = 15.
+Rvmax = 25.
 
 if method == 1:
     # >>> ========================     Method 1    ========================= <<<
     # >>> == randomly sample (RA,DEC) and generate p(z) from void catalog == <<<
+
+    nrand_to_ndata = 100
+    nrand = int(nrand_to_ndata*nvoid)
 
     logger.info("Load observational masks")
 
@@ -80,7 +77,6 @@ if method == 1:
         masks.append(pymangle.Mangle(mask_file))
 
     logger.info("Load survey geometry and randomly sample RA DEC")
-    nrand = 200*len(vcat)
 
     if survey_part == "lowzcmass":
         geoms = pymangle.Mangle(mask_boss_fdir + "mask_DR12v5_CMASSLOWZ_North.ply")
@@ -88,6 +84,7 @@ if method == 1:
         select = (geoms.weight(ra_rand, dec_rand) != 0)
         ra_rand = ra_rand[select]
         dec_rand = dec_rand[select]
+        survey_rand = 0
 
     if survey_part == "lowze2":
         geoms = [
@@ -102,6 +99,7 @@ if method == 1:
 
         ra_rand = ra_rand[idx_out_mask]
         dec_rand = dec_rand[idx_out_mask]
+        survey_rand = 1
 
     if survey_part == "lowze3":
         geoms = [
@@ -116,6 +114,7 @@ if method == 1:
 
         ra_rand = ra_rand[idx_out_mask]
         dec_rand = dec_rand[idx_out_mask]
+        survey_rand = 2
 
     logger.info("Apply boss observational geometry")
    
@@ -126,17 +125,18 @@ if method == 1:
     ra_rand = ra_rand[~total_masked_idx]
     dec_rand = dec_rand[~total_masked_idx]
 
-    logger.info("Generate redshifts that follows void redshifts distribution")
-
-    z, nofz = make_nofz_from_sample(vcat['z'], bins=50)
-    z_rand = sample_from_histogram(len(ra_rand), z, nofz)
-    w_rand = np.ones(len(ra_rand))
-
-    rand_cat = np.empty(len(ra_rand), dtype=fgal_type)
+    rand_cat = np.empty(len(ra_rand), dtype=fvoid_type)
     rand_cat["ra"] = ra_rand
     rand_cat["dec"] = dec_rand
-    rand_cat["z"] = z_rand
-    rand_cat["w"] = w_rand
+    rand_cat["w"] = 1
+    rand_cat["survey"] = survey_rand
+
+    logger.info("Generate redshifts that follows void redshifts distribution")
+
+    z_rv_bounds = [(zmin, zmax), (Rvmin, Rvmax)]
+
+    bounded_kde = bounded_kde_transform(np.c_[vcat['z'], vcat['Rv']], z_rv_bounds)
+    rand_cat['z'], rand_cat['Rv'] = resample_bounded(bounded_kde, len(ra_rand), z_rv_bounds)
 
     logger.info(f"Save to file {onamebase}_rand.npy")
 
@@ -189,7 +189,7 @@ if method == 2:
         for irvbin in range(len(rv_edges)-1):
             select = ((vcat['z'] >= zbin_edges[izbin]) & (vcat['z'] < zbin_edges[izbin+1]) &
                     (vcat['Rv'] >= rv_edges[irvbin]) & (vcat['Rv'] < rv_edges[irvbin+1]))
-            logger.info(f"Current subcatalog have {select.sum()} entries")
+            logger.info(f"Current subcatalog have {select.sum()} voids")
             vrand.append(shuffle_void_catalog(vcat[select]))
         
     vrand = np.concatenate(vrand)
