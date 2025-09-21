@@ -468,9 +468,13 @@ def sample_from_histogram(N:int, x:np.ndarray, pdf:np.ndarray) -> np.ndarray:
     return samples
 
 def logit_transform(x, a, b):
+    a -= 1e-5
+    b += 1e-5
     return np.log((x - a) / (b - x))
 
 def logit_inverse(y, a, b):
+    a -= 1e-5
+    b += 1e-5
     ey = np.exp(y)
     return (a + b * ey) / (1 + ey)
 
