@@ -3,7 +3,6 @@ Utils to apply HOD. Totally from HODOR.
 '''
 import os
 import sys
-import configparser
 from typing import Union
 from copy import copy
 import numpy as np
@@ -61,49 +60,6 @@ class ModelClass():
     self.model_instance = self.compute_model_instance()
     self.rsd_shift = self.compute_rsd_shift()
 
-  # def __init__(self, config_file, halo_files, halo_cat_list, **kwargs):
-  #   config = configparser.ConfigParser()
-  #   config.read(config_file)
-
-  #   self.model = config['hod'].getint('model')
-  #   if self.model == 0:
-  #     model_name = 'MW'
-  #   elif self.model == 1:
-  #     model_name = 'GP18'
-  #   else:
-  #     raise ValueError('Unrecognised model')
-  #   self.parameters_names = tuple(map(str, config.get('params', 'model_params_names').split(', ')))
-  #   self.num_params = config['hod'].getint('num_params')
-
-  #   print(f'\nINFO: The used HOD model is {model_name} having {self.parameters_names} as parameters')
-  #   if len(self.parameters_names) != self.num_params:
-  #     print("ERROR: Check the num_params and model_params_names in the config file")
-  #     sys.exit(1)
-
-  #   self.verbose   = config['hod'].getboolean('verbose')
-  #   self.redshift  = config['hod'].getfloat('redshift')
-  #   self.box_size  = config['hod'].getfloat('box_size')
-  #   self.Omega_m   = config['hod'].getfloat('Omega_m')
-  #   self.init_seed = config['hod'].getint('init_seed')
-  #   self.num_seeds = config['hod'].getint('num_seeds')
-  #   for key, value in kwargs.items():
-  #     if key == 'redshift':
-  #       self.redshift = value
-  #     if key == 'box_size':
-  #       self.box_size = value
-  #     if key == 'Omega_m':
-  #       self.Omega_m  = value
-
-  #   print(f'\nINFO: The number of seeds to populate galaxies is {self.num_seeds}, starting from {self.init_seed}')
-  #   self.z_space = config['hod'].getboolean('z_space')
-  #   self.halo_files = halo_files
-  #   print(f'\nINFO: The number of halo catalogs used to populate galaxies is {len(halo_files)}')
-
-  #   self.Num_ptcl_requirement = config['hod'].getfloat('Num_ptcl_requirement')
-
-  #   self.halo_cat_list = halo_cat_list
-  #   self.model_instance = self.compute_model_instance()
-  #   self.rsd_shift = self.compute_rsd_shift()
 
   def compute_model_instance(self):
     """ Compute model instance """
@@ -116,7 +72,7 @@ class ModelClass():
       sats_occ_model = ContrerasSats(redshift=self.redshift)
     elif self.model == 2:
       cens_occ_model = MWCens_IC(redshift=self.redshift)
-      sats_occ_model = MWSats(redshift=self.redshift)
+      sats_occ_model = MWSats(redshift=self.redshift, cenocc_model=cens_occ_model, modulate_with_cenocc=True)
 
     cens_prof_model = TrivialPhaseSpace(redshift=self.redshift)
     sats_prof_model = NFWPhaseSpace(redshift=self.redshift)
