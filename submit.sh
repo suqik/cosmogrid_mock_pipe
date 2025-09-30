@@ -5,8 +5,8 @@
 #SBATCH --ntasks-per-node=32
 #SBATCH --cpus-per-task=1
 #SBATCH --hint=nomultithread
-#SBATCH -o %J.out
-#SBATCH -e %J.err
+#SBATCH -o job_logs/%J.out
+#SBATCH -e job_logs/%J.err
 
 export OMP_NUM_THREADS=1
 
