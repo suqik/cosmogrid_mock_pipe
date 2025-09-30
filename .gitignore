@@ -13,3 +13,4 @@ results/
 hod_fit/
 __pycache__/
 tmp/
+job_logs/
