@@ -73,6 +73,9 @@ class ModelClass():
     elif self.model == 2:
       cens_occ_model = MWCens_IC(redshift=self.redshift)
       sats_occ_model = MWSats(redshift=self.redshift, cenocc_model=cens_occ_model, modulate_with_cenocc=True)
+    elif self.model == 3:
+      cens_occ_model = MWCens_IC(redshift=self.redshift)
+      sats_occ_model = MWSats2(redshift=self.redshift, cenocc_model=cens_occ_model, modulate_with_cenocc=True)
 
     cens_prof_model = TrivialPhaseSpace(redshift=self.redshift)
     sats_prof_model = NFWPhaseSpace(redshift=self.redshift)
@@ -396,6 +399,90 @@ class MWSats(occupation_model_template.OccupationComponent):
         {'logM1': 13.75,
         'logMcut': 11.5,
         'k': 0.5,
+        'alpha': 0.5}
+        )
+    return param_dict
+
+
+class MWSats2(occupation_model_template.OccupationComponent):
+  '''
+    The satellite occupation model used by Martin White:
+    <Nsat> = [ ( Mhalo - M0 ) / M1 ]^alpha
+  '''
+  def __init__(self, threshold=model_defaults.default_luminosity_threshold, \
+      prim_haloprop_key=model_defaults.prim_haloprop_key, redshift=0, \
+      modulate_with_cenocc=False, cenocc_model=None, **kwargs):
+    upper_occupation_bound = float("inf")
+    super(MWSats2, self).__init__(gal_type='satellites', \
+        threshold=threshold, upper_occupation_bound=upper_occupation_bound, \
+        prim_haloprop_key=prim_haloprop_key, **kwargs)
+    self.redshift = redshift
+    self.param_dict = self.get_default_parameters(self.threshold)
+
+    if cenocc_model is None:
+      cenocc_model = MWCens(prim_haloprop_key=prim_haloprop_key, \
+          threshold=threshold)
+    else:
+      if modulate_with_cenocc is False:
+        msg = ("You chose to input a `cenocc_model`, but you set the \n"
+            "`modulate_with_cenocc` keyword to False, so your "
+            "`cenocc_model` will have no impact on the model's behavior.\n"
+            "Be sure this is what you intend before proceeding.\n")
+        warnings.warn(msg)
+
+    self.modulate_with_cenocc = modulate_with_cenocc
+    if self.modulate_with_cenocc:
+      try:
+        assert isinstance(cenocc_model, \
+            occupation_model_template.OccupationComponent)
+      except AssertionError:
+        msg = ('The input `cenocc_model` must be an instance of \n'
+            '`OccupationComponent` or one of its sub-classes.\n')
+        raise HalotoolsError(msg)
+
+      self.central_occupation_model = cenocc_model
+      self.param_dict.update(self.central_occupation_model.param_dict)
+
+  def mean_occupation(self, **kwargs):
+    if self.modulate_with_cenocc:
+      for key, value in self.param_dict.items():
+        if key in self.central_occupation_model.param_dict:
+          self.central_occupation_model.param_dict[key] = value
+
+    if 'table' in list(kwargs.keys()):
+      mass = kwargs['table'][self.prim_haloprop_key]
+    elif 'prim_haloprop' in list(kwargs.keys()):
+      mass = np.atleast_1d(kwargs['prim_haloprop'])
+    else:
+      msg = ('\nYou must pass either a `table` or `prim_haloprop` argument \n'
+          'to the `mean_occupation` function of the `MWSats` class.\n')
+      raise HalotoolsError(msg)
+
+    # Mcut = 10.**self.param_dict['logMcut']
+    M0 = 10.**self.param_dict['logM0']
+    M1 = 10.**self.param_dict['logM1']
+
+    mean_nsat = np.zeros_like(mass)
+    idx_nonzero = np.where(mass - M0 > 0)[0]
+    with warnings.catch_warnings():
+      warnings.simplefilter("ignore", RuntimeWarning)
+      mean_nsat[idx_nonzero] = \
+          ((mass[idx_nonzero] - M0) / \
+          M1)**self.param_dict['alpha']
+
+    if self.modulate_with_cenocc:
+      mean_ncen = self.central_occupation_model.mean_occupation(**kwargs)
+      mean_nsat *= mean_ncen
+
+    return mean_nsat
+
+  def get_default_parameters(self, threshold):
+    '''
+      Best-fit HOD parameters from Martin White
+    '''
+    param_dict = (
+        {'logM1': 13.75,
+        'logM0': 11.45,
         'alpha': 0.5}
         )
     return param_dict
