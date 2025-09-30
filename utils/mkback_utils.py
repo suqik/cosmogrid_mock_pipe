@@ -17,7 +17,7 @@ def make_nofz(zctrs, nz):
     return nofz
 
 ### sampling and add shape noise
-def gen_gal_positions(ngal:float, mask:np.ndarray, nofz:dict) -> np.ndarray:
+def gen_gal_positions(ngal:float, mask:np.ndarray, nofz:dict, logger=None) -> np.ndarray:
     # get RA DEC of footprint
     nside = hp.npix2nside(len(mask))
     ra, dec = hp.pix2ang(nside, np.argwhere(mask != 0).flatten(), lonlat=True)
@@ -25,8 +25,10 @@ def gen_gal_positions(ngal:float, mask:np.ndarray, nofz:dict) -> np.ndarray:
     # get effective galaxy numbers
     sample_area = (ra.max() - ra.min()) * (dec.max() - dec.min())
     Ngal = int(np.around(ngal * sample_area * 60**2)) # ngal is in arcmin^-2
+    if logger is not None:
+        logger.info(f"Generating {Ngal} galaxies")
     ###   For test   ###
-    Ngal = 1_000_000
+    # Ngal = 1_000_000
     ####################
     
     # sample RA DEC
