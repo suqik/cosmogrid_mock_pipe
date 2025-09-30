@@ -9,7 +9,6 @@ import pyccl as ccl
 import h5py
 from astropy.io import fits
 from typing import Union
-from halotools.empirical_models import halo_mass_to_halo_radius, NFWProfile
 from halotools.sim_manager import UserSuppliedHaloCatalog
 
 # >>>========   Define constants   =========<<<
@@ -195,12 +194,9 @@ def get_pkd_halo_attrs(fname:str, attrs:Union[str,list]=["pos", "mass"], Lbox:fl
         Attributes to be extracted. Three external attributes are 
         "pos" (for position, in Mpc/h), "vel" (for velocity, in km/s)
         and "mass" (for virial mass, in Msun/h).
-    Lbos: float or None
+    Lbox: float or None
         Boxsize of the snapshot. Required when asking position, velocity
         or mass.
-    rhoc0: float or None
-        Critical density at redshift 0. Required when asking velocity or
-        mass.
     redshift: float or None
         redshift of the snapshot. Required when asking velocity.
     
