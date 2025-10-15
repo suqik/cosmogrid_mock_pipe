@@ -397,9 +397,9 @@ if __name__ == "__main__":
             zmax = halo_lcone['z'].max()
             halo_lcone_cart = Sph2Cart(cosmo_ccl, ra=halo_lcone['ra'], dec=halo_lcone['dec'], z=halo_lcone['z'])
             void_pos, void_radius = find_void(halo_lcone_cart, boxsize=None)
-            void_rcut = (void_radius > 15) & (void_radius < 25)
-            void_pos = void_pos[void_rcut]
-            void_radius = void_radius[void_rcut]
+            # void_rcut = (void_radius > 15) & (void_radius < 25)
+            # void_pos = void_pos[void_rcut]
+            # void_radius = void_radius[void_rcut]
 
             v_ra, v_dec, v_z, phys_cut = Cart2Sph(cosmo_ccl, pos=void_pos)
             void_lcone = np.empty(len(v_ra), dtype=fvoid_type)
@@ -447,5 +447,5 @@ if __name__ == "__main__":
 
         ### save
         logger.info("Save to file.")
-        np.save("aux/catalogs/bossdata_lowzcmasstot_void.npy", boss_lowzcmasstot_void)
+        np.save("aux/catalogs/Data/bossdata_lowzcmasstot_void.npy", boss_lowzcmasstot_void)
     #################################################################################################

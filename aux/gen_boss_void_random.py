@@ -12,7 +12,7 @@ from utils.io_func import *
 from utils.mkfore_utils import bounded_kde_transform, resample_bounded
 
 # >>> ========================     For test    =========================
-cattype = "bossdata" # `boss` for simulation and `bossdata` for observational data
+cattype = "mock" # `boss` for simulation and `bossdata` for observational data
 
 # 1: randomly sample (RA,DEC) and generate p(z) from void catalog
 # 2: shuffle (RA,DEC) and (z,R) separately
@@ -26,18 +26,26 @@ if cattype == "boss":
 if cattype == "bossdata":
     fnamebase = f"aux/catalogs/Data/{cattype}_lowzcmasstot_void"
 
+if cattype == "mock":
+    cosmo_label = 1
+    hod_lb = 9
+    fnamebase = f"/data2/suchen/CosmoGrid/Void/cosmo_{cosmo_label:06d}_run_0_HOD_{hod_lb}_run_0_boss_north"
+
 logger.info(f"Load void catalog from {fnamebase}.npy")
 
 vcat = np.load(fnamebase+".npy")
+rv_bounds = [15, 30]
+rvcut = (vcat['Rv'] > rv_bounds[0]) & (vcat['Rv'] < rv_bounds[1])
+vcat = vcat[rvcut]
 
 # >>> ===================================================================
 
 logger.info(f"Use method {method} to generate void random catalog")
 
-zmin = 0.2
-zmax = 0.4
-Rvmin = 15.
-Rvmax = 25.
+zmin = np.minimum(vcat['z'].min(), 0.2)
+zmax = np.maximum(vcat['z'].max(), 0.4)
+Rvmin = np.minimum(vcat['Rv'].min(), rv_bounds[0])
+Rvmax = np.maximum(vcat['Rv'].max(), rv_bounds[1])
 
 if method == 1:
     # >>> ========================     Method 1    ========================= <<<
@@ -90,7 +98,7 @@ if method == 1:
 
         return ra_rand, dec_rand, survey_rand
 
-    nrand_to_ndata = 10
+    nrand_to_ndata = 5
 
     logger.info("Load observational masks")
 
@@ -155,7 +163,10 @@ if method == 1:
 
     logger.info(f"Save to file {fnamebase}_rand.npy")
 
-    np.save(fnamebase+"_rand.npy", rand_cat)
+    if cattype == "mock":
+        np.save(f"/data2/suchen/CosmoGrid/Rand/cosmo_{cosmo_label:06d}_run_0_HOD_{hod_lb}_run_0_boss_north.npy", rand_cat)
+    else:
+        np.save(fnamebase+"_rand.npy", rand_cat)
     # >>> =================================================================== <<<
 
 # if method == 2:
