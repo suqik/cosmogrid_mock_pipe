@@ -5,10 +5,9 @@ apply HOD and make lightcone.
 
 import json
 import numpy as np
-from scipy.stats import qmc
+from scipy.stats import qmc, truncnorm
 import pymangle
 import datetime
-import sys
 from loguru import logger
 
 from utils.io_func import *
@@ -67,7 +66,8 @@ nz_2dflens_fname = nz_fbase + "nbar_2dFLens_south_data.dat"
 model = 2
 num_params = 6 # Number of parameters of HOD model
 nhod_per_cosmo = 10 # Number of varied HOD parameter values per cosmology
-model_params_names = 'logMcut', 'sigma_logM', 'logM1', 'k', 'alpha', 'fic'
+model_params_names = 'logMcut', 'sigma_logM', 'logM1', 'k', 'alpha', 'fic' # for model == 2
+# model_params_names = 'logMcut', 'sigma_logM', 'logM1', 'logM0', 'alpha', 'fic' # SIMBIG HOD params, for model==3
 Num_ptcl_requirement = 12
 verbose = True
 num_seeds = 1
@@ -75,13 +75,18 @@ init_seed = 33000
 z_space = False
 ngal_ref = 3.5e-4 # BOSS LRG mean number density
 
-test_model_param = np.array([12.59102404,  2.10923402, 14.06049531,  0.07197861,  0.25447211, 1.0])
-model_params_dict = {}
-for i in range(num_params):
-    model_params_dict[model_params_names[i]] = test_model_param[i]
+# test_model_param = np.array([12.59102404,  2.10923402, 14.06049531,  0.07197861,  0.25447211, 1.0])
+# model_params_dict = {}
+# for i in range(num_params):
+#     model_params_dict[model_params_names[i]] = test_model_param[i]
 
+### prior for model == 2
 param_prior_low = np.array([12.5, 1e-5, 12.5, 0.0, 0.0])
-param_prior_high = np.array([15, 3.0, 15.5, 10.0, 2.0])
+param_prior_high = np.array([15, 3.0, 15, 10.0, 2.0])
+
+### prior from SIMBIG, for model == 3
+# param_prior_low = np.array([12., 0.1, 13., 13., 0.0])
+# param_prior_high = np.array([14., 0.6, 15., 15., 1.5])
 
 ''' output files '''
 out_dir = "/data2/suchen/CosmoGrid/HOD/"
@@ -114,7 +119,7 @@ def load_halocat(cosmo_label, ofmt='hod'):
 
         return halo_file, hod_halo_cat, OmegaM
 
-def find_fic(halo_mass, hod_param_vals):
+def find_fic(halo_mass, hod_param_vals, model_lb=2):
     if isinstance(hod_param_vals, list) or isinstance(hod_param_vals, np.ndarray):
         model_params_dict = dict(zip(model_params_names, hod_param_vals))
     elif isinstance(hod_param_vals, dict):
@@ -137,14 +142,18 @@ def find_fic(halo_mass, hod_param_vals):
     ctr.param_dict = tmp_dict
     Nctr = ctr.mean_occupation(prim_haloprop=massbin)
 
-    sat = MWSats(redshift=redshift)
+    if model_lb == 2:
+        sat = MWSats(redshift=redshift, cenocc_model=ctr, modulate_with_cenocc=True)
+    elif model_lb == 3:
+        sat = MWSats2(redshift=redshift, cenocc_model=ctr, modulate_with_cenocc=True)
+
     sat.param_dict = tmp_dict
     Nsat = sat.mean_occupation(prim_haloprop=massbin)
 
-    f_ic = (ngal_ref - np.sum(Nsat*NM))/np.sum(Nctr*NM)
+    f_ic = ngal_ref/(np.sum(Nctr*NM) + np.sum(Nsat*NM))
     
-    return f_ic
-        
+    return f_ic, Nsat
+          
 def apply_hod(cosmo_label, halo_file, hod_halo_cat, OmegaM, model_params_dict, idx_hod):
     hod_model = ModelClass(
         [halo_file], [hod_halo_cat], 
@@ -165,7 +174,7 @@ def apply_hod(cosmo_label, halo_file, hod_halo_cat, OmegaM, model_params_dict, i
 
     return dict_of_gsamples
 
-def find_hod_params_alive(cosmo_label, halo_mass, num_pool=10000, seedini=9782):
+def find_hod_params_alive(cosmo_label, halo_mass, num_pool=30000, seedini=9782):
     ## Sample HOD parameters
     count = 0
     idx = 0
@@ -173,6 +182,16 @@ def find_hod_params_alive(cosmo_label, halo_mass, num_pool=10000, seedini=9782):
     lhc_sampler = qmc.LatinHypercube(d=len(param_prior_low), seed=seed)
     hod_params_pool = lhc_sampler.random(n=num_pool)
     hod_params_pool = qmc.scale(hod_params_pool, param_prior_low, param_prior_high)
+
+    # ##################    apply Gaussian prior of parameter alpha    ##################
+    # mu = 1.0
+    # sigma = 0.5
+    # lower_bound = 0.0
+    # upper_bound = 2.0
+    # hod_params_pool[:,4] = truncnorm(
+    #     (lower_bound - mu)/sigma, (upper_bound - mu)/sigma, loc=mu, scale=sigma
+    #     ).rvs(size=num_pool)
+    # ####################################################################################
 
     ## Main loop to find HOD parameters that matches reference galaxy number density
     hod_params_alive = []
@@ -186,10 +205,10 @@ def find_hod_params_alive(cosmo_label, halo_mass, num_pool=10000, seedini=9782):
             break
 
         ## update fic
-        if model == 2:
-            f_ic = find_fic(halo_mass, curr_hod_params)
+        if model == 2 or model == 3:
+            f_ic, Nsat = find_fic(halo_mass, curr_hod_params, model_lb=model)
             ## FIXME: lower bound of f_ic may need careful consideration.
-            if f_ic > 0.5 and f_ic <= 1.0:
+            if f_ic > 0.5 and f_ic <= 1.0 and Nsat.max() < 100: # avoid too many satellite galaxies in one halo
                 count += 1
                 idx += 1
                 hod_params_alive.append(np.append(curr_hod_params, f_ic))
@@ -359,11 +378,12 @@ if __name__ == "__main__":
         cosmo_ccl = get_cosmo_from_file(sim_fmt.format(cosmo_label) + "params.yml", otype="ccl")
         ### initial hod parameter dictionary
         hod_param_dict_tot['cosmo{:06d}'.format(cosmo_label)] = {}
+        hod_param_dict_tot['cosmo{:06d}'.format(cosmo_label)]['cosmo'] = cosmo_ccl.to_dict()
 
         ### load halo catalog
         halo_file, hod_halocat, OmegaM = load_halocat(cosmo_label, ofmt='hod')
         halo_mass = hod_halocat.halo_table["halo_mvir"].value
-        hod_params_alive = find_hod_params_alive(cosmo_label, halo_mass, num_pool=10000, seedini=9782)
+        hod_params_alive = find_hod_params_alive(cosmo_label, halo_mass, num_pool=30000, seedini=9782)
 
         if hod_params_alive is not None:
             gsamples_list = []
@@ -389,7 +409,6 @@ if __name__ == "__main__":
                     y_c = (y_c + Lbox) % Lbox
                     z_c = (z_c + Lbox) % Lbox
                     gal_pos = np.c_[x_c, y_c, z_c]
-
                     galcone_output = make_survey(gal_pos, masks, cosmo_ccl, nofz_info, check_repeat=False)
                     ## save as binary file
                     np.save(out_dir + out_fmt.format(cosmo_label, ihod, iseed, "boss_north_2dflens_south"), galcone_output)
@@ -419,12 +438,6 @@ if __name__ == "__main__":
 
         with open(hod_param_out, "w+") as f:
             json.dump(final_hod_params, f, indent=4)
-
-        # final_failed_cosmo = []
-        # for l in all_failed_cosmo:
-        #     final_failed_cosmo.extend(l)
-        # if len(final_failed_cosmo) > 0:
-        #     logger.warning(f"Failed cosmologies: {final_failed_cosmo}")
 
     end = datetime.datetime.now()
     logger.info(f"Time elapsed: {end-start}")
