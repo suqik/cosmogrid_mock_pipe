@@ -3,9 +3,9 @@ Make background galaxies.
 Random sampling galaxies from background shear map, and add shape noise
 '''
 
+import os
 import numpy as np
 import h5py
-# from tqdm import trange
 
 from utils.io_func import *
 from utils.mkback_utils import *
@@ -18,15 +18,15 @@ redshift_src_list = np.concatenate([np.arange(0.1,1.0,0.05), np.arange(1.0, 2.0,
 
 ''' galaxy params '''
 ngal_list = [0.62, 1.18, 1.85, 1.26, 1.31] # arcmin^-2, from Table. 1 in 2404.15402
-sigma_e = 0.3
+sigma_e = None
 seed = 0
 mask_file = "/home/suchen/Program/CosmoGrid/catalogs/masks/mask_KiDS_North_1024.fits"
 nofz_file_fmt = "catalogs/NOfZ/srcs/K1000_NS_V1.0.0A_ugriZYJHKs_photoz_SG_mask_LF_svn_309c_2Dbins_v2_SOMcols_Fid_blindC_TOMO{}_Nz.asc"
 nz_tomo_bins = 5
 
 ''' output file info'''
-out_dir = "/data2/suchen/CosmoGrid/Shape/"
-out_fmt = "cosmo_{:06d}_run_0_kids_north_tomo{:d}_wo_noise.txt"
+out_dir = "/data2/suchen/CosmoGrid/Shape/pure_kids_ngal/"
+out_fmt = "cosmo_{:06d}_run_0_kids_north_tomo{:d}.npy"
 
 ''' main routine '''
 ### read shear map
@@ -65,10 +65,14 @@ if __name__ == "__main__":
         
         logger.info("Read cosmo labels")
 
-        # with open("/data3/suchen/CosmoGridV1/grid/dirnames.txt", "r") as f:
-        with open("/data2/suchen/CosmoGrid/Shape/missing_cosmo_labels.txt", "r") as f:
-            dirnames = f.readlines()
-            cosmo_labels_tot = [int(i.strip("\n").split("_")[1]) for i in dirnames]
+        hod_param_fname = "cfgs/hod/hod_5params_dict.json"
+
+        hod_params_dict = get_hod_params(hod_param_fname)
+        cosmo_labels_tot = []
+
+        for icosmo_str in hod_params_dict.keys():
+            if len(hod_params_dict[icosmo_str]) > 0:
+                cosmo_labels_tot.append(int(icosmo_str[5:]))
 
         k, m = divmod(len(cosmo_labels_tot), size)
         chunks = [cosmo_labels_tot[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] for i in range(size)]
@@ -138,11 +142,11 @@ if __name__ == "__main__":
             
             logger.info("Tomographic bin {}".format(itomo+1))
 
-            bg_galcat = gen_gal_positions(ngal_list[itomo], mask, nofz_dict[f'tomo{itomo+1}'])
-            # bg_galcat = get_gal_shear(bg_galcat, shear_map_dict, sigma_e=sigma_e, seed=seed+1)
-            bg_galcat = get_gal_shear(bg_galcat, shear_map_dict, sigma_e=None, seed=seed+1)
+            bg_galcat = gen_gal_positions(ngal_list[itomo], mask, nofz_dict[f'tomo{itomo+1}'], logger)
+            bg_galcat = get_gal_shear(bg_galcat, shear_map_dict, sigma_e=sigma_e, seed=seed+1)
+            # bg_galcat = get_gal_shear(bg_galcat, shear_map_dict, sigma_e=None, seed=seed+1)
 
-            np.savetxt(out_dir + out_fmt.format(cosmo_label, itomo+1), bg_galcat, fmt='%.3f %.3f %.5f %.5f %.8f %.8f %.3f')
+            np.save(os.path.join(out_dir, out_fmt.format(cosmo_label, itomo+1)), bg_galcat)
 
         # ############################      For Test      ###########################
         # out_fmt = "cosmo_{:06d}_run_0_kids_north_tomo{:d}_wo_noise_part{}.txt"
