@@ -303,7 +303,7 @@ if __name__ == "__main__":
     vnamebase = "/data2/suchen/CosmoGrid/Void/cosmo_{:06d}_run_0_HOD_{:d}_run_0_boss_north.npy"
     ran_radec_fname = "/data2/suchen/CosmoGrid/Rand/boss_cmasslowztot_north_radec.npy"
     zRvnamebase = "/data2/suchen/CosmoGrid/NofZ/Void/cosmo_{:06d}_run_0_HOD_{:d}_run_0_boss_north.pkl"
-    shape_noise_flag = "pure"
+    shape_noise_flag = "sigma0.3"
     bgnamebase = f"/data2/suchen/CosmoGrid/Shape/{shape_noise_flag:s}_kids_ngal/" + "cosmo_{:06d}_run_0_kids_north_tomo{:d}.npy"
 
     logger.info("Initialize dsigma runner")
