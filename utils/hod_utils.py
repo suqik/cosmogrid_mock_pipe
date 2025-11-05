@@ -32,6 +32,8 @@ class ModelClass():
       model_name = 'GP18'
     elif self.model == 2:
       model_name = 'MW_fic'
+    elif self.model == 3:
+      model_name = 'MW_fic2'
     else:
       raise ValueError('Unrecognised model')
     self.parameters_names = param_names
