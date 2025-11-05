@@ -6,6 +6,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 import healpy as hp
 from .io_func import bgal_type
+import warnings
 
 def make_nofz(zctrs, nz):
     zedges = 0.5*(zctrs[1:] + zctrs[:-1])
@@ -17,7 +18,7 @@ def make_nofz(zctrs, nz):
     return nofz
 
 ### sampling and add shape noise
-def gen_gal_positions(ngal:float, mask:np.ndarray, nofz:dict, logger=None) -> np.ndarray:
+def gen_gal_positions(ngal:float, mask:np.ndarray, nofz:dict|float|list, logger=None) -> np.ndarray:
     # get RA DEC of footprint
     nside = hp.npix2nside(len(mask))
     ra, dec = hp.pix2ang(nside, np.argwhere(mask != 0).flatten(), lonlat=True)
@@ -27,9 +28,6 @@ def gen_gal_positions(ngal:float, mask:np.ndarray, nofz:dict, logger=None) -> np
     Ngal = int(np.around(ngal * sample_area * 60**2)) # ngal is in arcmin^-2
     if logger is not None:
         logger.info(f"Generating {Ngal} galaxies")
-    ###   For test   ###
-    # Ngal = 1_000_000
-    ####################
     
     # sample RA DEC
     sampled_ra = np.random.uniform(low=ra.min(), high=ra.max(), size=Ngal)
@@ -37,18 +35,8 @@ def gen_gal_positions(ngal:float, mask:np.ndarray, nofz:dict, logger=None) -> np
     sampled_dec = np.rad2deg(np.arccos(cos_sampled_dec))
     sampled_dec = 90. - sampled_dec
 
-    # ####################################################   For test   ###########################################################
-    # sampled_ra = np.random.uniform(low=0, high=360, size=Ngal)
-    # cos_sampled_dec = np.random.uniform(low=-1, high=1, size=Ngal)
-    # sampled_dec = np.rad2deg(np.arccos(cos_sampled_dec))
-    # sampled_dec = 90. - sampled_dec
-    # #############################################################################################################################
-
     sample_pix = hp.ang2pix(nside, sampled_ra, sampled_dec, lonlat=True)
     picked_pix_in_sample = np.isin(sample_pix, np.argwhere(mask!=0).flatten())
-    # #######################   For test   #######################
-    # picked_pix_in_sample = np.ones(len(sample_pix)).astype(bool)
-    ##############################################################
 
     Ngal = np.sum(picked_pix_in_sample)
     picked_ra = sampled_ra[picked_pix_in_sample]
@@ -58,24 +46,27 @@ def gen_gal_positions(ngal:float, mask:np.ndarray, nofz:dict, logger=None) -> np
     bg_galcat['ra'] = picked_ra
     bg_galcat['dec'] = picked_dec
 
-    # sample redshift
-    zsamples = []
-    zedges = nofz['zedges']
-    nz = nofz['nz']
+    if isinstance(nofz, dict):
+        # sample redshift
+        zsamples = []
+        zedges = nofz['zedges']
+        nz = nofz['nz']
 
-    for i in range(len(nz)-1):
-        iNgal = int(Ngal*nz[i])
-        zsamples.append(np.random.uniform(low=zedges[i], high=zedges[i+1], size=iNgal))
+        for i in range(len(nz)-1):
+            iNgal = int(Ngal*nz[i])
+            zsamples.append(np.random.uniform(low=zedges[i], high=zedges[i+1], size=iNgal))
 
-    zsamples = np.concatenate(zsamples)
-    Ngal = len(zsamples)
+        zsamples = np.concatenate(zsamples)
+        Ngal = len(zsamples)
 
-    id_alive = np.random.choice(np.arange(len(bg_galcat)), Ngal, replace=False)
-    bg_galcat = bg_galcat[id_alive]
-    bg_galcat['z'] = zsamples
-    # #############   For test   #############
-    # bg_galcat['z'] = np.ones(len(bg_galcat))
-    # ########################################
+        id_alive = np.random.choice(np.arange(len(bg_galcat)), Ngal, replace=False)
+        bg_galcat = bg_galcat[id_alive]
+        bg_galcat['z'] = zsamples
+
+    if isinstance(nofz, float):
+        bg_galcat['z'] = np.ones(Ngal) * nofz
+    if isinstance(nofz, list):
+        bg_galcat['z'] = np.random.uniform(low=nofz[0], high=nofz[1], size=Ngal)
 
     return bg_galcat
 
