@@ -30,6 +30,7 @@ zmax = 0.4
 
 ''' mask file info'''
 
+boss_part_names = ['boss_lowzcmass', 'boss_lowze2', 'boss_lowze3']
 mask_boss_fdir = "catalogs/masks/boss_geom/"
 ### geometry files
 geom_boss_fname_list = [
@@ -75,10 +76,11 @@ init_seed = 33000
 z_space = False
 ngal_ref = 3.5e-4 # BOSS LRG mean number density
 
-# test_model_param = np.array([12.59102404,  2.10923402, 14.06049531,  0.07197861,  0.25447211, 1.0])
-# model_params_dict = {}
-# for i in range(num_params):
-#     model_params_dict[model_params_names[i]] = test_model_param[i]
+fid_hod_model_param = np.array([12.59102404,  2.10923402, 14.06049531,  0.07197861,  0.25447211, 1.0])
+# fid_hod_model_param = np.array([13.2, 0.62, 14.32, 13.24, 0.93, 1.0])
+model_params_dict = {}
+for i in range(num_params):
+    model_params_dict[model_params_names[i]] = fid_hod_model_param[i]
 
 ### prior for model == 2
 param_prior_low = np.array([12.5, 1e-5, 12.5, 0.0, 0.0])
@@ -153,7 +155,7 @@ def find_fic(halo_mass, hod_param_vals, model_lb=2):
     f_ic = ngal_ref/(np.sum(Nctr*NM) + np.sum(Nsat*NM))
     
     return f_ic, Nsat
-          
+
 def apply_hod(cosmo_label, halo_file, hod_halo_cat, OmegaM, model_params_dict, idx_hod):
     hod_model = ModelClass(
         [halo_file], [hod_halo_cat], 
@@ -221,8 +223,12 @@ def find_hod_params_alive(cosmo_label, halo_mass, num_pool=30000, seedini=9782):
     else:
         return None
 
-def make_survey(gal_pos:np.ndarray, masks:dict, cosmo_ccl:ccl.Cosmology, nofz_info:dict, check_repeat:bool=False):
+def make_survey(gal_pos:np.ndarray, masks:dict, cosmo_ccl:ccl.Cosmology, nofz_info:dict, check_repeat:bool=False, rot_degrees=None):
     assert isinstance((gal_pos), np.ndarray)
+    if gal_pos.ndim != 2:
+        raise ValueError("gal_pos should be 2D array")
+    if gal_pos.shape[1] != 3:
+        raise ValueError("gal_pos should have 3 columns")
     assert isinstance((masks), dict)
     assert isinstance((cosmo_ccl), ccl.Cosmology)
     assert isinstance((nofz_info), dict)
@@ -238,7 +244,13 @@ def make_survey(gal_pos:np.ndarray, masks:dict, cosmo_ccl:ccl.Cosmology, nofz_in
     ### and the last one are the IDs of galaxies.
     galcone = make_lightcone_tiles(gal_pos, boxsize=Lbox, chi_min=chi_min, chi_max=chi_max)
 
-    galcone_ra, galcone_dec, galcone_z, phys_cut = Cart2Sph(cosmo_ccl, pos=galcone[:,:-1])
+    ### if apply rotation
+    if rot_degrees is not None:
+        ## In shear catalog, we instead rotate the mask, therefore here we use the same 
+        ## rotation angle but with an inverse of the rotator.
+        galcone_vector = rotate_lightcone(galcone[:,:-1], rot_degrees, inv=True)
+        
+    galcone_ra, galcone_dec, galcone_z, phys_cut = Cart2Sph(cosmo_ccl, pos=galcone_vector)
     galcone_id = galcone[phys_cut][:,-1]
     
     del galcone
@@ -300,6 +312,17 @@ def make_survey(gal_pos:np.ndarray, masks:dict, cosmo_ccl:ccl.Cosmology, nofz_in
 
     del galcone_id
 
+    ### finally do not forget to rotate back
+    if rot_degrees is not None:
+        galcone_output_vec = Sph2Cart(cosmo_ccl, ra=galcone_output["ra"], dec=galcone_output["dec"], z=galcone_output["z"])
+        galcone_output_vec = rotate_lightcone(galcone_output_vec, rot_degrees) # since rotate back there we use foreward rotator
+        galcone_ra, galcone_dec, galcone_z, phys_cut = Cart2Sph(cosmo_ccl, pos=galcone_output_vec)
+
+        galcone_output = galcone_output[phys_cut]
+        galcone_output["ra"] = galcone_ra
+        galcone_output["dec"] = galcone_dec
+        galcone_output["z"] = galcone_z
+        
     return galcone_output
 
 def clear_print(str):
@@ -307,6 +330,75 @@ def clear_print(str):
     print(str)
     print(">>>" + "="*50 + "<<<")
 
+# # >>> =====   single easy run   ====== <<<
+# if __name__ == "__main__":
+#     from mpi4py import MPI
+#     comm = MPI.COMM_WORLD
+#     rank = comm.Get_rank()
+#     size = comm.Get_size()
+
+#     if rank == 0:
+        
+#         logger.info("Read cosmo labels")
+
+#         with open("/data3/suchen/CosmoGridV1/grid/dirnames.txt", "r") as f:
+#             dirnames = f.readlines()
+#             cosmo_labels_tot = [int(i.strip("\n").split("_")[1]) for i in dirnames]
+
+#         k, m = divmod(len(cosmo_labels_tot), size)
+#         chunks = [cosmo_labels_tot[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] for i in range(size)]
+#     else:
+#         chunks = None
+
+#     if rank == 0:
+#         logger.info("Scattering labels")
+
+#     cosmo_labels = comm.scatter(chunks, root=0)
+
+#     for cosmo_label in cosmo_labels:
+#         if rank == 0:
+#             logger.info(f"Start processing cosmo_label {cosmo_label}")
+
+#         cosmo_ccl = get_cosmo_from_file(sim_fmt.format(cosmo_label) + "params.yml", otype="ccl")
+#         hubble = cosmo_ccl.to_dict()["h"]
+#         chi_min = ccl.comoving_radial_distance(cosmo_ccl, 1./(1 + zmin))*hubble # Mpc/h
+#         chi_max = ccl.comoving_radial_distance(cosmo_ccl, 1./(1 + zmax))*hubble # Mpc/h
+
+#         halo_pos_mass_dict = get_pkd_halo_attrs(os.path.join(sim_fmt.format(cosmo_label), halo_fmt.format(redshift_label)), 
+#                                                 ["pos", "mass"], Lbox, redshift)
+
+#         ### choose the most massive halos according to reference ngal
+#         Ngal = int(ngal_ref*Lbox*Lbox*Lbox)
+#         halo_pos_mass = np.empty((len(halo_pos_mass_dict["mass"])), dtype=np.dtype([
+#             ("pos", 'f4', 3),
+#             ("mass", 'f4')
+#         ]))
+#         halo_pos_mass["pos"] = halo_pos_mass_dict["pos"]
+#         halo_pos_mass["mass"] = halo_pos_mass_dict["mass"]
+#         halo_pos_mass.sort(order="mass")
+#         halo_pos_mass = halo_pos_mass[::-1]
+
+#         gal_pos = halo_pos_mass["pos"][:Ngal]
+
+#         galcone = make_lightcone_tiles(gal_pos, boxsize=Lbox, chi_min=chi_min, chi_max=chi_max)
+
+#         galcone_ra, galcone_dec, galcone_z, phys_cut = Cart2Sph(cosmo_ccl, pos=galcone[:,:-1])
+#         galcone_id = galcone[phys_cut][:,-1]
+        
+#         del galcone
+
+#         galcone_output = np.empty((len(galcone_ra),), dtype=fgal_type)
+#         galcone_output["ra"] = galcone_ra
+#         galcone_output["dec"] = galcone_dec
+#         galcone_output["z"] = galcone_z
+
+#         del galcone_ra, galcone_dec, galcone_z
+
+#         np.save(f"/data2/suchen/CosmoGrid/AUX/Halo/cosmo_{cosmo_label:06d}_galcone.npy", galcone_output)
+
+
+
+# >>> ======   fix HOD run   ====== <<<
 if __name__ == "__main__":
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
@@ -317,12 +409,17 @@ if __name__ == "__main__":
         
         logger.info("Read cosmo labels")
 
-        with open("/data3/suchen/CosmoGridV1/grid/dirnames.txt", "r") as f:
-            dirnames = f.readlines()
-            cosmo_labels_tot = [int(i.strip("\n").split("_")[1]) for i in dirnames]
+        # with open("/data3/suchen/CosmoGridV1/grid/dirnames.txt", "r") as f:
+        #     cosmo_labels_tot = []
+        #     for line in f.readlines():
+        #         cosmo_labels_tot.append(int(line.strip("\n").split("_")[1]))
+        #     dirnames = f.readlines()
+        #     cosmo_labels_tot = [int(i.strip("\n").split("_")[1]) for i in dirnames]
+
+        cosmo_labels_tot = get_cosmo_name_list_original("/data3/suchen/CosmoGridV1/grid/dirnames.txt")
 
         ######## For Test #######
-        # cosmo_labels_tot = [1,2,3,4]
+        # cosmo_labels_tot = [1]
         #########################
         k, m = divmod(len(cosmo_labels_tot), size)
         chunks = [cosmo_labels_tot[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] for i in range(size)]
@@ -330,16 +427,32 @@ if __name__ == "__main__":
         chunks = None
 
     if rank == 0:
+
         logger.info("Scattering labels")
 
     cosmo_labels = comm.scatter(chunks, root=0)
 
     start = datetime.datetime.now()
+
+    ### set up rotation angles
+    ROT=True
+    rot_degrees_list = [
+        [0,50,0],
+        [90,0,-50],
+        [180,-50,0],
+        [270,0,50],
+        [0,-50,0],
+        [90,0,50],
+        [180,50,0],
+        [270,0,-50],
+    ]
+
     masks = {}
     masks['boss_gemo'] = []
     masks['boss_masks'] = []
 
     logger.info("Load mask files.")
+
     ### load boss survey geometry
     for geom_file in geom_boss_fname_list:
         masks['boss_gemo'].append(pymangle.Mangle(geom_file))
@@ -350,6 +463,7 @@ if __name__ == "__main__":
     masks['2dflens'] = loadFitsMaps(mask_weight_2df_fname)
 
     logger.info("Load n(z) files.")
+
     ### load nofz information
     nofz_info = {}
     ### boss lowzcmass
@@ -368,10 +482,14 @@ if __name__ == "__main__":
     argend = np.argwhere(nofz[:,1] == zmax)[0,0]
     nofz_info = make_nofz_info(nofz_info, '2dflens', nofz[argstart:argend+2,0], nofz[argstart:argend+1,3], nofz[argstart:argend+1,2])
 
+
     logger.info("Main process.")
+
+
     failed_cosmo = []
     hod_param_dict_tot = {}
     for cosmo_label in cosmo_labels:
+
         logger.info(f"Start processing cosmo_label {cosmo_label}")
 
         # ### initialize cosmology
@@ -382,62 +500,168 @@ if __name__ == "__main__":
 
         ### load halo catalog
         halo_file, hod_halocat, OmegaM = load_halocat(cosmo_label, ofmt='hod')
-        halo_mass = hod_halocat.halo_table["halo_mvir"].value
-        hod_params_alive = find_hod_params_alive(cosmo_label, halo_mass, num_pool=30000, seedini=9782)
 
-        if hod_params_alive is not None:
-            gsamples_list = []
-            ### populate galaxies
-            for ihod, each_hod_params in enumerate(hod_params_alive):
-                ## save hod parameter to param dict
-                hod_param_dict_tot['cosmo{:06d}'.format(cosmo_label)]['HOD{}'.format(ihod)] = list(each_hod_params)
-                ## apply HOD
-                model_params_dict = dict(zip(model_params_names, each_hod_params))
-                dict_of_gsamples = apply_hod(cosmo_label, halo_file, hod_halocat, OmegaM, model_params_dict, ihod)
-                
-                gsamples_list.append(dict_of_gsamples)
+        dict_of_gsamples = apply_hod(cosmo_label, halo_file, hod_halocat, OmegaM, model_params_dict, 0)
+        # halo_mass = hod_halocat.halo_table["halo_mvir"].value
+        # hod_params_alive = find_hod_params_alive(cosmo_label, halo_mass, num_pool=30000, seedini=9782)
+        for iseed, key in enumerate(dict_of_gsamples.keys()):
+            x_c, y_c, z_c = dict_of_gsamples[key]["x"], dict_of_gsamples[key]["y"], dict_of_gsamples[key]["z"]
+            x_c = (x_c + Lbox) % Lbox
+            y_c = (y_c + Lbox) % Lbox
+            z_c = (z_c + Lbox) % Lbox
+            gal_pos = np.c_[x_c, y_c, z_c]
 
-            logger.info(f'{len(gsamples_list)} HODs are found.')
+            if ROT:
+                for irot, rot_degrees in enumerate(rot_degrees_list):
 
-            ### apply survey geometry
-            logger.info('Begin Loops')
+                    logger.info(f"Rotation {irot}: rot_angles (zyx) = {rot_degrees}")
 
-            for ihod, dict_of_gsamples in enumerate(gsamples_list):
-                for iseed, key in enumerate(dict_of_gsamples.keys()):
-                    x_c, y_c, z_c = dict_of_gsamples[key]["x"], dict_of_gsamples[key]["y"], dict_of_gsamples[key]["z"]
-                    x_c = (x_c + Lbox) % Lbox
-                    y_c = (y_c + Lbox) % Lbox
-                    z_c = (z_c + Lbox) % Lbox
-                    gal_pos = np.c_[x_c, y_c, z_c]
-                    galcone_output = make_survey(gal_pos, masks, cosmo_ccl, nofz_info, check_repeat=False)
-                    ## save as binary file
-                    np.save(out_dir + out_fmt.format(cosmo_label, ihod, iseed, "boss_north_2dflens_south"), galcone_output)
-
-            logger.info('Loops end')
-
-        else:
-            logger.warning("Number of HODs is not equal to nhod_per_cosmo. Skip this cosmology.")
-            failed_cosmo.append(cosmo_label)
-            continue
-
-        ##################################               For test              #################################
-        # dict_of_gsamples = apply_hod(cosmo_label, halo_file, hod_halocat, OmegaM, model_params_dict)
-        # make_survey([dict_of_gsamples], masks, cosmo_ccl, nofz_info, check_repeat=True, cosmo_label=cosmo_label, outname="boss_north_2dflens_south")
-        # make_survey([dict_of_gsamples], masks, cosmo_ccl, nofz_info, check_repeat=True, cosmo_label=cosmo_label, outname="full_sky")
-        ########################################################################################################
-
-    all_hod_params = comm.gather(hod_param_dict_tot, root=0)
-    all_failed_cosmo = comm.gather(failed_cosmo, root=0)
-
-    if rank == 0:
-        ### save hod parameter dict
-        logger.info(f"Save HOD parameters")
-        final_hod_params = {}
-        for d in all_hod_params:
-            final_hod_params.update(d)
-
-        with open(hod_param_out, "w+") as f:
-            json.dump(final_hod_params, f, indent=4)
+                    galcone_output = make_survey(gal_pos, masks, cosmo_ccl, nofz_info, check_repeat=False, rot_degrees=rot_degrees)
+                    out_dir = "/data2/suchen/CosmoGrid/fix_HOD_rots/"
+                    np.save(out_dir + out_fmt.format(cosmo_label, 0, iseed, f"boss_north_2dflens_south_rot{irot}"), galcone_output)
+            else:
+                galcone_output = make_survey(gal_pos, masks, cosmo_ccl, nofz_info, check_repeat=False)
+                ## save as binary file
+                out_dir = "/data2/suchen/CosmoGrid/fix_HOD/"
+                np.save(out_dir + out_fmt.format(cosmo_label, 0, iseed, "boss_north_2dflens_south"), galcone_output)
 
     end = datetime.datetime.now()
     logger.info(f"Time elapsed: {end-start}")
+
+
+
+# # >>> ======   batch run   ====== <<<
+# if __name__ == "__main__":
+#     from mpi4py import MPI
+#     comm = MPI.COMM_WORLD
+#     rank = comm.Get_rank()
+#     size = comm.Get_size()
+
+#     if rank == 0:
+        
+#         logger.info("Read cosmo labels")
+
+#         with open("/data3/suchen/CosmoGridV1/grid/dirnames.txt", "r") as f:
+#             dirnames = f.readlines()
+#             cosmo_labels_tot = [int(i.strip("\n").split("_")[1]) for i in dirnames]
+
+#         ######## For Test #######
+#         # cosmo_labels_tot = [1,2,3,4]
+#         #########################
+#         k, m = divmod(len(cosmo_labels_tot), size)
+#         chunks = [cosmo_labels_tot[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] for i in range(size)]
+#     else:
+#         chunks = None
+
+#     if rank == 0:
+#         logger.info("Scattering labels")
+
+#     cosmo_labels = comm.scatter(chunks, root=0)
+
+#     start = datetime.datetime.now()
+#     masks = {}
+#     masks['boss_gemo'] = []
+#     masks['boss_masks'] = []
+
+#     logger.info("Load mask files.")
+#     ### load boss survey geometry
+#     for geom_file in geom_boss_fname_list:
+#         masks['boss_gemo'].append(pymangle.Mangle(geom_file))
+#     for mask_file in mask_boss_fname_list:
+#         masks['boss_masks'].append(pymangle.Mangle(mask_file))
+
+#     ### load 2dflens survey geometry
+#     masks['2dflens'] = loadFitsMaps(mask_weight_2df_fname)
+
+#     logger.info("Load n(z) files.")
+#     ### load nofz information
+#     nofz_info = {}
+#     ### boss lowzcmass
+#     boss_part_names = ['boss_lowzcmass', 'boss_lowze2', 'boss_lowze3']
+#     for ipart, nz_boss_fname in enumerate(nz_boss_fname_list):
+#         nofz = np.loadtxt(nz_boss_fname, usecols=(1,2,3,5)) # zmin, zmax, nz, shell_vol
+#         argstart = np.argwhere(nofz[:,0] == zmin)[0,0]
+#         argend = np.argwhere(nofz[:,1] == zmax)[0,0]
+
+#         nofz_info = make_nofz_info(nofz_info, boss_part_names[ipart], nofz[argstart:argend+2,0], nofz[argstart:argend+1,3], nofz[argstart:argend+1,2])
+
+#     ### 2dflens
+#     nofz_info['2dflens'] = {}
+#     nofz = np.loadtxt(nz_2dflens_fname, usecols=(1,2,3,4)) # zmin, zmax, nz, shell_vol
+#     argstart = np.argwhere(nofz[:,0] == zmin)[0,0]
+#     argend = np.argwhere(nofz[:,1] == zmax)[0,0]
+#     nofz_info = make_nofz_info(nofz_info, '2dflens', nofz[argstart:argend+2,0], nofz[argstart:argend+1,3], nofz[argstart:argend+1,2])
+
+#     logger.info("Main process.")
+#     failed_cosmo = []
+#     hod_param_dict_tot = {}
+#     for cosmo_label in cosmo_labels:
+#         logger.info(f"Start processing cosmo_label {cosmo_label}")
+
+#         # ### initialize cosmology
+#         cosmo_ccl = get_cosmo_from_file(sim_fmt.format(cosmo_label) + "params.yml", otype="ccl")
+#         ### initial hod parameter dictionary
+#         hod_param_dict_tot['cosmo{:06d}'.format(cosmo_label)] = {}
+#         hod_param_dict_tot['cosmo{:06d}'.format(cosmo_label)]['cosmo'] = cosmo_ccl.to_dict()
+
+#         ### load halo catalog
+#         halo_file, hod_halocat, OmegaM = load_halocat(cosmo_label, ofmt='hod')
+#         halo_mass = hod_halocat.halo_table["halo_mvir"].value
+#         hod_params_alive = find_hod_params_alive(cosmo_label, halo_mass, num_pool=30000, seedini=9782)
+
+#         if hod_params_alive is not None:
+#             gsamples_list = []
+#             ### populate galaxies
+#             for ihod, each_hod_params in enumerate(hod_params_alive):
+#                 ## save hod parameter to param dict
+#                 hod_param_dict_tot['cosmo{:06d}'.format(cosmo_label)]['HOD{}'.format(ihod)] = list(each_hod_params)
+#                 ## apply HOD
+#                 model_params_dict = dict(zip(model_params_names, each_hod_params))
+#                 dict_of_gsamples = apply_hod(cosmo_label, halo_file, hod_halocat, OmegaM, model_params_dict, ihod)
+                
+#                 gsamples_list.append(dict_of_gsamples)
+
+#             logger.info(f'{len(gsamples_list)} HODs are found.')
+
+#             ### apply survey geometry
+#             logger.info('Begin Loops')
+
+#             for ihod, dict_of_gsamples in enumerate(gsamples_list):
+#                 for iseed, key in enumerate(dict_of_gsamples.keys()):
+#                     x_c, y_c, z_c = dict_of_gsamples[key]["x"], dict_of_gsamples[key]["y"], dict_of_gsamples[key]["z"]
+#                     x_c = (x_c + Lbox) % Lbox
+#                     y_c = (y_c + Lbox) % Lbox
+#                     z_c = (z_c + Lbox) % Lbox
+#                     gal_pos = np.c_[x_c, y_c, z_c]
+#                     galcone_output = make_survey(gal_pos, masks, cosmo_ccl, nofz_info, check_repeat=False)
+#                     ## save as binary file
+#                     np.save(out_dir + out_fmt.format(cosmo_label, ihod, iseed, "boss_north_2dflens_south"), galcone_output)
+
+#             logger.info('Loops end')
+
+#         else:
+#             logger.warning("Number of HODs is not equal to nhod_per_cosmo. Skip this cosmology.")
+#             failed_cosmo.append(cosmo_label)
+#             continue
+
+#         ##################################               For test              #################################
+#         # dict_of_gsamples = apply_hod(cosmo_label, halo_file, hod_halocat, OmegaM, model_params_dict)
+#         # make_survey([dict_of_gsamples], masks, cosmo_ccl, nofz_info, check_repeat=True, cosmo_label=cosmo_label, outname="boss_north_2dflens_south")
+#         # make_survey([dict_of_gsamples], masks, cosmo_ccl, nofz_info, check_repeat=True, cosmo_label=cosmo_label, outname="full_sky")
+#         ########################################################################################################
+
+#     all_hod_params = comm.gather(hod_param_dict_tot, root=0)
+#     all_failed_cosmo = comm.gather(failed_cosmo, root=0)
+
+#     if rank == 0:
+#         ### save hod parameter dict
+#         logger.info(f"Save HOD parameters")
+#         final_hod_params = {}
+#         for d in all_hod_params:
+#             final_hod_params.update(d)
+
+#         with open(hod_param_out, "w+") as f:
+#             json.dump(final_hod_params, f, indent=4)
+
+#     end = datetime.datetime.now()
+#     logger.info(f"Time elapsed: {end-start}")
