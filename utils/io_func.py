@@ -2,6 +2,7 @@
 Basic I/O functions
 '''
 
+import os
 import json
 import numpy as np
 import healpy as hp
@@ -102,6 +103,42 @@ fvoid_type = np.dtype(
 # >>>========================================================<<<
 
 # >>>==================    I/O functions   ==================<<<
+def get_cosmo_name_list_original(fname:str="/data3/suchen/CosmoGridV1/grid/dirnames.txt"):
+    '''
+    Read cosmo labels from source files.
+    '''
+    if not os.path.exists(fname):
+        raise FileNotFoundError(f"File {fname} not found!")
+    
+    with open(fname, "r") as f:
+        cosmo_labels_tot = []
+        for line in f.readlines():
+            cosmo_labels_tot.append(int(line.strip("\n").split("_")[1]))
+
+    return cosmo_labels_tot
+
+def get_cosmo_name_list_process(hod_param_fname:str, NECESSARY=False):
+    '''
+    Read cosmo labels from hod param json file.
+    '''
+
+    if not os.path.exists(hod_param_fname):
+        raise FileNotFoundError(f"File {hod_param_fname} not found!")
+
+    hod_params_dict = get_hod_params(hod_param_fname)
+    cosmo_labels_tot = []
+
+    if NECESSARY:
+        for icosmo_str in hod_params_dict.keys():
+            if len(hod_params_dict[icosmo_str]) > 0:
+                cosmo_labels_tot.append(int(icosmo_str[5:]))
+
+    else:
+        for icosmo_str in hod_params_dict.keys():
+            cosmo_labels_tot.append(int(icosmo_str[5:]))
+
+    return cosmo_labels_tot
+
 def get_cosmo_from_file(fname:str, otype="ccl") -> Union[dict, ccl.Cosmology]:
     '''
     Get cosmology from PKDGrav3 config. Can transform to ccl format
