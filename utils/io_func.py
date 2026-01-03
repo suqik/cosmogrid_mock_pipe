@@ -117,7 +117,7 @@ def get_cosmo_name_list_original(fname:str="/data3/suchen/CosmoGridV1/grid/dirna
 
     return cosmo_labels_tot
 
-def get_cosmo_name_list_process(hod_param_fname:str, NECESSARY=False):
+def get_cosmo_name_list_process(hod_param_fname:str):
     '''
     Read cosmo labels from hod param json file.
     '''
@@ -125,16 +125,11 @@ def get_cosmo_name_list_process(hod_param_fname:str, NECESSARY=False):
     if not os.path.exists(hod_param_fname):
         raise FileNotFoundError(f"File {hod_param_fname} not found!")
 
-    hod_params_dict = get_hod_params(hod_param_fname)
+    hod_params_dict = get_hod_params(hod_param_fname, otype="dict")
     cosmo_labels_tot = []
 
-    if NECESSARY:
-        for icosmo_str in hod_params_dict.keys():
-            if len(hod_params_dict[icosmo_str]) > 0:
-                cosmo_labels_tot.append(int(icosmo_str[5:]))
-
-    else:
-        for icosmo_str in hod_params_dict.keys():
+    for icosmo_str in hod_params_dict.keys():
+        if len(hod_params_dict[icosmo_str]) == 11:
             cosmo_labels_tot.append(int(icosmo_str[5:]))
 
     return cosmo_labels_tot
@@ -204,9 +199,9 @@ def get_hod_params(fname:str, otype:str='dict') -> Union[dict, np.ndarray]:
     if otype == "array":
         hod_params_arr = []
         for icosmo in len(hod_params):
-            nhod_in_curr_cosmo = len(hod_params[f'cosmo{icosmo:06d}'])
+            nhod_in_curr_cosmo = len(hod_params[f'cosmo{icosmo:06d}']) - 1
             for ihod in len(nhod_in_curr_cosmo):
-                hod_params_arr.append(hod_params[f'cosmo{icosmo:06d}'][ihod])
+                hod_params_arr.append(hod_params[f'cosmo{icosmo:06d}'][f'HOD{ihod}'])
         
         hod_params_arr = np.asarray(hod_params_arr)
         
