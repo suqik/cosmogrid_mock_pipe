@@ -4,6 +4,7 @@ Utils usd in constructing foreground samples
 
 import numpy as np
 from scipy.stats import gaussian_kde
+from scipy.spatial.transform import Rotation as R
 import healpy as hp
 import pyccl as ccl
 from typing import Union, Tuple
@@ -255,43 +256,77 @@ def make_lightcone_tiles(position:np.ndarray, boxsize:float, chi_min:float, chi_
 
     return lightcone
 
-def cat2shell(pos:np.ndarray, Nside:int, coord="cart"):
+def cat2shell(nside:int, **kwargs):
     '''
     Convert a catalog to a HEALPix shell.
 
     Parameters:
     ----------
-    pos: np.ndarray
-        The positions of the particles.
-    Nside: int
+    nside: int
         The HEALPix Nside parameter.
-    coord: str
-        The coordinate system of the positions. 
-        Can be `cart`, `sph` or `lonlat`.
-        Default is `cart`.
+    **kwargs: dict
+        The keyword arguments for the shell function.
+        Can be: 
+        - pos: np.ndarray, (N,3) representing (x,y,z)
+               in Cartesian coordinates.
+        - (ra,dec): np.ndarray, (N,) representing RA (DEC)
+               in Spherical coordinates.
+        - (theta,phi): np.ndarray, (N,) representing theta (phi)
+               in Spherical coordinates.
 
     Returns:
     -------
     shell: np.ndarray
         The HEALPix shell.
     '''
-    if coord == "cart":
-        if pos.shape[1] != 3:
-            raise ValueError("Cartesian coordinate must have 3 components!")
-        part_pix = hp.vec2pix(Nside, pos[:,0], pos[:,1], pos[:,2])
-    if coord == "sph":
-        if pos.shape[1] != 2:
-            raise ValueError("Spherical coordinate must have 2 components!")
-        part_pix = hp.ang2pix(Nside, pos[:,0], pos[:,1], lonlat=False)
-    if coord == "lonlat":
-        if pos.shape[1] != 2:
-            raise ValueError("RADEC coordinate must have 2 components!")
-        part_pix = hp.ang2pix(Nside, pos[:,0], pos[:,1], lonlat=True)
+
+    if "pos" in kwargs.keys():
+        pos = kwargs["pos"]
+        part_pix = hp.vec2pix(nside, pos[:,0], pos[:,1], pos[:,2])
+    
+    elif "ra" in kwargs.keys() and "dec" in kwargs.keys():
+        ra = kwargs["ra"]
+        dec = kwargs["dec"]
+        part_pix = hp.ang2pix(nside, ra, dec, lonlat=True)
+
+    elif "theta" in kwargs.keys() and "phi" in kwargs.keys():
+        theta = kwargs["theta"]
+        phi = kwargs["phi"]
+        part_pix = hp.ang2pix(nside, theta, phi, lonlat=False)
+
+    else:
+        raise ValueError("Should provide either [pos] or (ra,dec) or (theta,phi)!")
         
-    shell = np.zeros(12*Nside**2).astype(np.int64)
+    shell = np.zeros(12*nside**2).astype(np.int64)
     np.add.at(shell, part_pix, 1)
 
     return shell
+
+def rotate_lightcone(galcone, rot_degrees, inv=False):
+    '''
+    Apply rotation on lightcone particles.
+
+    Parameters:
+    ----------
+    galcone: np.ndarray
+        The lightcone particles in (x,y,z).
+    rot_degrees: list or np.ndarray
+        The rotation angle in degrees.
+    inv: bool
+        Whether to apply the inverse rotation. Default is True.
+
+    Returns:
+    -------
+    galcone_rot: np.ndarray
+        The rotated lightcone particles in (x,y,z).
+    '''
+
+    r = R.from_euler('zyx', rot_degrees, degrees=True)
+    if inv:
+        r = r.inv()
+    galcone_rot = r.apply(galcone)
+
+    return galcone_rot
 
 # >>>=============================================================================<<<
 
@@ -357,7 +392,7 @@ def apply_2dflens_geometry(galcone, mask_weight_maps, interp=True, galcone_ids=N
 
     return galcone_2dflens, galcone_ids_out
 
-def apply_nz_downsample(galcone, nofz_info, galcone_ids=None):
+def apply_nz_downsample(galcone, nofz_info, galcone_ids=None, norm=False):
     zedges = nofz_info['zedges']
     shell_vol = nofz_info['shell_vol']
     nz_ref = nofz_info['nz_ref']
@@ -365,6 +400,10 @@ def apply_nz_downsample(galcone, nofz_info, galcone_ids=None):
     z_mock = galcone["z"]
     Nz_mock, _ = np.histogram(z_mock, zedges)
     downsample_rate = nz_ref/Nz_mock*shell_vol
+
+
+    if norm:
+        downsample_rate /= np.max(downsample_rate)
 
     downsample_rate = np.clip(downsample_rate, 0, 1)
     
@@ -379,11 +418,12 @@ def apply_nz_downsample(galcone, nofz_info, galcone_ids=None):
         in_bin = (z_mock >= zmin) & (z_mock < zmax)
         gal_in_bin = galcone[in_bin]
 
-        mask = np.random.choice(np.arange(len(gal_in_bin)), size=int(downsample_rate[ibin]*len(gal_in_bin)), replace=False)
-        galcone_dsampled.append(gal_in_bin[mask])
-        number_in_bin.append(len(gal_in_bin[mask]))
-        if galcone_ids is not None:
-            galcone_ids_dsampled.append(galcone_ids[in_bin][mask])
+        if len(gal_in_bin) != 0:
+            mask = np.random.choice(np.arange(len(gal_in_bin)), size=int(downsample_rate[ibin]*len(gal_in_bin)), replace=False)
+            galcone_dsampled.append(gal_in_bin[mask])
+            number_in_bin.append(len(gal_in_bin[mask]))
+            if galcone_ids is not None:
+                galcone_ids_dsampled.append(galcone_ids[in_bin][mask])
 
     galcone_dsampled = np.concatenate(galcone_dsampled)
 
