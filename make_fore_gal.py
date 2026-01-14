@@ -3,6 +3,7 @@ From halo to galaxy.
 apply HOD and make lightcone.
 '''
 
+import sys
 import json
 import numpy as np
 from scipy.stats import qmc, truncnorm
@@ -15,11 +16,12 @@ from utils.mkfore_utils import *
 
 wdir = "/home/suchen/Program/CosmoGrid"
 
-''' simulation info '''
+''' 1. Simulation info '''
+
 sim_fmt = "/data3/suchen/CosmoGridV1/grid/cosmo_{:06d}/run_0/"
 halo_fmt = "pkd_halos/CosmoML.{:05d}.fofstats.0"
-redshift_label = 120 # corresponding to z~0.3
-# redshift_label = 110 # corresponding to z~0.51
+# redshift_label = 120 # corresponding to z~0.3
+redshift_label = 110 # corresponding to z~0.51
 
 lb_z_file = "/data3/suchen/CosmoGridV1/label_z_table.txt"
 lb_z_tb = np.loadtxt(lb_z_file)
@@ -33,14 +35,16 @@ if redshift_label == 120:
     zmin = 0.2
     zmax = 0.4
     zbin_lb = 1
+    boss_part_names = ['boss_lowzcmass', 'boss_lowze2', 'boss_lowze3']
+
 elif redshift_label == 110:
     zmin = 0.4
     zmax = 0.6
     zbin_lb = 2
+    boss_part_names = ['boss_cmass']
 
-''' mask file info'''
+''' 2. Mask file info'''
 
-boss_part_names = ['boss_lowzcmass', 'boss_lowze2', 'boss_lowze3'] # define which BOSS regions to make  'boss_lowzcmass', 'boss_lowze2', 'boss_lowze3', 'boss_cmass'
 mask_boss_fdir = f"{wdir}/catalogs/masks/boss_geom/"
 
 geom_boss_fname_list = {
@@ -63,7 +67,7 @@ mask_boss_fname_list = [
 
 mask_weight_2df_fname = f"{wdir}/catalogs/masks/2dflens_geom/2dFLens_mask_weight.fits"
 
-''' n(z) file info '''
+''' 3. n(z) file info '''
 
 ### n(z) files
 nz_fbase = f"{wdir}/catalogs/NOfZ/lens/"
@@ -76,7 +80,14 @@ nz_boss_fname_list = {
 
 nz_2dflens_fname = nz_fbase + "nbar_2dFLens_south_data.dat"
 
-''' HOD params '''
+''' 4. Output files '''
+
+out_dir = f"/data2/suchen/CosmoGrid/high_ngal_suits_wrsd/HOD_bin{zbin_lb}/"
+out_fmt = "cosmo_{:06d}_run_0_HOD_{:d}_run_{:d}_{:s}.npy"
+hod_param_out = f"{wdir}/cfgs/hod/hod_5params_dict_high_ngal_wcosmo2.json"
+
+''' 5. HOD setup '''
+
 model = 2
 num_params = 6 # Number of parameters of HOD model
 nhod_per_cosmo = 10 # Number of varied HOD parameter values per cosmology
@@ -89,12 +100,12 @@ init_seed = 33000
 z_space = False
 ngal_ref = 4e-4
 
-''' output files '''
-out_dir = f"/data2/suchen/CosmoGrid/high_ngal_suits/HOD_bin{zbin_lb}/"
-out_fmt = "cosmo_{:06d}_run_0_HOD_{:d}_run_{:d}_{:s}.npy"
-hod_param_out = f"{wdir}/cfgs/hod/hod_5params_dict_high_ngal_wcosmo2.json"
+''' 6. Running modes specifications '''
 
-''' Modes specifications '''
+### 6.1 If apply RSD effect
+ADD_RSD = True
+
+### 6.2 If using rotations to augment data
 ROT = False # if True, will rotate the galaxy catalogs
 rot_degrees_list = [
     [0,50,0],
@@ -107,13 +118,20 @@ rot_degrees_list = [
     [270,0,-50],
 ]
 
-### Can only activate one of these three modes
+### 6.3 Running modes, can only activate one of these three
 HALO_ONLY = False # only use halo, which preserve the ngal but not G-H connection
 FIX_HOD = False # use the same G-H connection but cannot preserve the ngal
 VARY_HOD = True # preserve the ngal, as well as vary G-H connection
 
 if VARY_HOD:
     LOAD_HOD_PAR = True # if load exist hod params
+    #### prior for model == 2
+    param_prior_low  = np.array([12.5, 1e-5, 12.5, 0.00, 0.0])
+    param_prior_high = np.array([13.5, 3.00, 15.0, 10.0, 2.0])
+
+    #### prior from SIMBIG, for model == 3
+    # param_prior_low = np.array([12., 0.1, 13., 13., 0.0])
+    # param_prior_high = np.array([14., 0.6, 15., 15., 1.5])
 
 if FIX_HOD:
     # fid_hod_model_param = np.array([12.59102404,  2.10923402, 14.06049531,  0.07197861,  0.25447211, 1.0])
@@ -124,16 +142,11 @@ if FIX_HOD:
     for i in range(num_params):
         fixed_model_params_dict[model_params_names[i]] = fid_hod_model_param[i]
 
-### prior for model == 2
-param_prior_low  = np.array([12.5, 1e-5, 12.5, 0.00, 0.0])
-param_prior_high = np.array([13.5, 3.00, 15.0, 10.0, 2.0])
-
-### prior from SIMBIG, for model == 3
-# param_prior_low = np.array([12., 0.1, 13., 13., 0.0])
-# param_prior_high = np.array([14., 0.6, 15., 15., 1.5])
+''' 7. Show config info '''
 
 logger.info(f"used simulation redshift: {redshift:.4f}")
 logger.info(f"Simulating redshift range: {zmin:.4f} - {zmax:.4f}")
+logger.info(f"RSD: {ADD_RSD}")
 
 if HALO_ONLY:
     logger.info("HALO only mode")
@@ -144,8 +157,14 @@ elif FIX_HOD:
 elif VARY_HOD:
     logger.info("VARY_HOD mode")
     logger.info(f"Ngal ref: {ngal_ref*1e4:.2f} e-4")
-    logger.info(f"HOD prior low: {param_prior_low}")
-    logger.info(f"HOD prior high: {param_prior_high}")
+    if LOAD_HOD_PAR:
+        logger.info("Load HOD pars from:")
+        logger.info(f"{hod_param_out}")
+    else:
+        logger.info(f"HOD prior low: {param_prior_low}")
+        logger.info(f"HOD prior high: {param_prior_high}")
+        logger.info( "Will save cosmo and HOD pars to:")
+        logger.info(f"{hod_param_out}")
 
 if ROT:
     logger.info("Use rotation mode")
@@ -285,7 +304,7 @@ def find_hod_params_alive(cosmo_label, halo_mass, num_pool=30000, seedini=9782):
     else:
         return None
 
-def make_survey2(gal_pos:np.ndarray, masks:dict, cosmo_ccl:ccl.Cosmology, nofz_info:dict, check_repeat:bool=False, rot_degrees=None):
+def make_survey(gal_pos:np.ndarray, masks:dict, cosmo_ccl:ccl.Cosmology, nofz_info:dict, gal_vel=None, check_repeat:bool=False, rot_degrees=None):
     assert isinstance((gal_pos), np.ndarray)
 
     if gal_pos.ndim != 2:
@@ -306,7 +325,19 @@ def make_survey2(gal_pos:np.ndarray, masks:dict, cosmo_ccl:ccl.Cosmology, nofz_i
     ### transform box data to lightcone 
     ### Type of galcone: first 3 are galaxy Positions in Cartesian coordinates, 
     ### and the last one are the IDs of galaxies.
-    galcone = make_lightcone_tiles(gal_pos, boxsize=Lbox, chi_min=chi_min, chi_max=chi_max)
+    ### If considering RSD, will cut thicker slice
+    if ADD_RSD and gal_vel is not None:
+        Delta_chi = 300.0 # Mpc/h
+        galcone, galcone_vel = make_lightcone_tiles(gal_pos, 
+                                       boxsize=Lbox, 
+                                       chi_min=chi_min-Delta_chi, chi_max=chi_max+Delta_chi, 
+                                       other_prop=gal_vel
+                                       )
+        
+    else:
+        galcone = make_lightcone_tiles(gal_pos, boxsize=Lbox, 
+                                       chi_min=chi_min, chi_max=chi_max
+                                       )
 
     ### if apply rotation
     if rot_degrees is not None:
@@ -318,6 +349,12 @@ def make_survey2(gal_pos:np.ndarray, masks:dict, cosmo_ccl:ccl.Cosmology, nofz_i
         
     galcone_ra, galcone_dec, galcone_z, phys_cut = Cart2Sph(cosmo_ccl, pos=galcone_vector)
     galcone_id = galcone[phys_cut][:,-1]
+
+    ### apply RSD effect
+    if ADD_RSD and gal_vel is not None:
+        galcone_vel = galcone_vel[phys_cut]
+        gal_vel_los = (galcone_vel * galcone_vector).sum(axis=1) / np.linalg.norm(galcone_vector, axis=1)
+        galcone_zrsd = galcone_z + gal_vel_los * (1 + galcone_z) / sol
     
     del galcone
 
@@ -325,6 +362,18 @@ def make_survey2(gal_pos:np.ndarray, masks:dict, cosmo_ccl:ccl.Cosmology, nofz_i
     galcone_output["ra"] = galcone_ra
     galcone_output["dec"] = galcone_dec
     galcone_output["z"] = galcone_z
+
+    if ADD_RSD and gal_vel is not None:
+        galcone_output["zrsd"] = galcone_zrsd
+        ### and don't forget to apply a redshift cut
+        zrsd_cut = ((galcone_zrsd > zmin) & (galcone_zrsd < zmax))
+        galcone_output = galcone_output[zrsd_cut]
+        galcone_id = galcone_id[zrsd_cut]
+
+        del galcone_zrsd
+    ### if don't consider RSD, set zsrd to be identical as zreal
+    else:
+        galcone_output['zrsd'] = galcone_output['z']
 
     del galcone_ra, galcone_dec, galcone_z
 
@@ -343,7 +392,7 @@ def make_survey2(gal_pos:np.ndarray, masks:dict, cosmo_ccl:ccl.Cosmology, nofz_i
         galcone_boss, galcone_id_boss = apply_boss_geometry(galcone_output, geom_boss, masks_boss, galcone_ids=galcone_id)
         ### apply BOSS redshift downsample
         nofz_boss = nofz_info['boss_lowzcmass']
-        galcone_boss, galcone_id_boss = apply_nz_downsample(galcone_boss, nofz_boss, galcone_ids=galcone_id_boss, norm=False)
+        galcone_boss, galcone_id_boss = apply_nz_downsample(galcone_boss, nofz_boss, galcone_ids=galcone_id_boss, norm=False, add_rsd=ADD_RSD)
 
         logger.debug(f"ngal of lowz: {len(galcone_boss)}")
 
@@ -360,7 +409,7 @@ def make_survey2(gal_pos:np.ndarray, masks:dict, cosmo_ccl:ccl.Cosmology, nofz_i
         galcone_boss, galcone_id_boss = apply_boss_geometry(galcone_output, geom_boss, masks_boss, galcone_ids=galcone_id)
         ### apply BOSS redshift downsample
         nofz_boss = nofz_info['boss_lowze2']
-        galcone_boss, galcone_id_boss = apply_nz_downsample(galcone_boss, nofz_boss, galcone_ids=galcone_id_boss, norm=False)
+        galcone_boss, galcone_id_boss = apply_nz_downsample(galcone_boss, nofz_boss, galcone_ids=galcone_id_boss, norm=False, add_rsd=ADD_RSD)
 
         logger.info("Trimming boss_lowze2 region")
 
@@ -381,7 +430,7 @@ def make_survey2(gal_pos:np.ndarray, masks:dict, cosmo_ccl:ccl.Cosmology, nofz_i
         galcone_boss, galcone_id_boss = apply_boss_geometry(galcone_output, geom_boss, masks_boss, galcone_ids=galcone_id)
         ### apply BOSS redshift downsample
         nofz_boss = nofz_info['boss_lowze3']
-        galcone_boss, galcone_id_boss = apply_nz_downsample(galcone_boss, nofz_boss, galcone_ids=galcone_id_boss, norm=False)
+        galcone_boss, galcone_id_boss = apply_nz_downsample(galcone_boss, nofz_boss, galcone_ids=galcone_id_boss, norm=False, add_rsd=ADD_RSD)
 
         logger.info("Trimming boss_lowze3 region")
 
@@ -403,7 +452,7 @@ def make_survey2(gal_pos:np.ndarray, masks:dict, cosmo_ccl:ccl.Cosmology, nofz_i
         ### apply BOSS redshift downsample
         nofz_boss = nofz_info['boss_cmass']
         ###############################################################################################
-        galcone_boss, galcone_id_boss = apply_nz_downsample(galcone_boss, nofz_boss, galcone_ids=galcone_id_boss, norm=False)
+        galcone_boss, galcone_id_boss = apply_nz_downsample(galcone_boss, nofz_boss, galcone_ids=galcone_id_boss, norm=False, add_rsd=ADD_RSD)
 
         logger.debug(f"ngal of cmass: {len(galcone_boss)}")
         
@@ -420,7 +469,7 @@ def make_survey2(gal_pos:np.ndarray, masks:dict, cosmo_ccl:ccl.Cosmology, nofz_i
     ### apply 2dFLens survey geometry cut
     masks_2dflens = masks['2dflens']
     galcone_2dflens, galcone_id_2dflens = apply_2dflens_geometry(galcone_output, masks_2dflens, galcone_ids=galcone_id)
-    galcone_2dflens, galcone_id_2dflens = apply_nz_downsample(galcone_2dflens, nofz_info["2dflens"], galcone_ids=galcone_id_2dflens, norm=False)
+    galcone_2dflens, galcone_id_2dflens = apply_nz_downsample(galcone_2dflens, nofz_info["2dflens"], galcone_ids=galcone_id_2dflens, norm=False, add_rsd=ADD_RSD)
 
     galcone_2dflens['survey'] = 3
 
@@ -453,6 +502,11 @@ def make_survey2(gal_pos:np.ndarray, masks:dict, cosmo_ccl:ccl.Cosmology, nofz_i
 
 # >>> ======   main routine   ====== <<<
 if __name__ == "__main__":
+
+    TEST_MODE = False
+    if len(sys.argv) > 1 and sys.argv[-1] == "test":
+        TEST_MODE = True
+
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
@@ -464,7 +518,8 @@ if __name__ == "__main__":
 
         cosmo_labels_tot = get_cosmo_name_list_original("/data3/suchen/CosmoGridV1/grid/dirnames.txt")
         ######## For Test #######
-        # cosmo_labels_tot = [1]
+        if TEST_MODE:
+            cosmo_labels_tot = [1]
         #########################
         k, m = divmod(len(cosmo_labels_tot), size)
         chunks = [cosmo_labels_tot[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] for i in range(size)]
@@ -558,7 +613,7 @@ if __name__ == "__main__":
             halo_pos_mass = halo_pos_mass[::-1]
 
             gal_pos = halo_pos_mass["pos"][:Ngal]
-            galcone_output = make_survey2(gal_pos, masks, cosmo_ccl, nofz_info, check_repeat=False)
+            galcone_output = make_survey(gal_pos, masks, cosmo_ccl, nofz_info, check_repeat=False)
             ## save as binary file
             out_dir = "/data2/suchen/CosmoGrid/HALO_only_suits/HOD_bin2/"
             np.save(out_dir + out_fmt.format(cosmo_label, 0, 0, "boss_north_2dflens_south"), galcone_output)
@@ -585,11 +640,11 @@ if __name__ == "__main__":
 
                             logger.info(f"Rotation {irot}: rot_angles (zyx) = {rot_degrees}")
 
-                            galcone_output = make_survey2(gal_pos, masks, cosmo_ccl, nofz_info, check_repeat=False, rot_degrees=rot_degrees)
+                            galcone_output = make_survey(gal_pos, masks, cosmo_ccl, nofz_info, check_repeat=False, rot_degrees=rot_degrees)
                             out_dir = "/data2/suchen/CosmoGrid/fix_HOD_rots/"
                             np.save(out_dir + out_fmt.format(cosmo_label, 0, iseed, f"boss_north_2dflens_south_rot{irot}"), galcone_output)
                     else:
-                        galcone_output = make_survey2(gal_pos, masks, cosmo_ccl, nofz_info, check_repeat=False)
+                        galcone_output = make_survey(gal_pos, masks, cosmo_ccl, nofz_info, check_repeat=False)
                         ## save as binary file
                         out_dir = "/data2/suchen/CosmoGrid/fix_HOD_suits/HOD_bin2/"
                         np.save(out_dir + out_fmt.format(cosmo_label, 0, iseed, "boss_north_2dflens_south"), galcone_output)
@@ -630,7 +685,12 @@ if __name__ == "__main__":
                             y_c = (y_c + Lbox) % Lbox
                             z_c = (z_c + Lbox) % Lbox
                             gal_pos = np.c_[x_c, y_c, z_c]
-                            galcone_output = make_survey2(gal_pos, masks, cosmo_ccl, nofz_info, check_repeat=False)
+                            if ADD_RSD:
+                                vx_c, vy_c, vz_c = dict_of_gsamples[key]["vx"], dict_of_gsamples[key]["vy"], dict_of_gsamples[key]["vz"]
+                                gal_vel = np.c_[vx_c, vy_c, vz_c]
+                                galcone_output = make_survey(gal_pos, masks, cosmo_ccl, nofz_info, gal_vel, check_repeat=False)
+                            else:
+                                galcone_output = make_survey(gal_pos, masks, cosmo_ccl, nofz_info, check_repeat=False)
                             ## save as binary file
                             np.save(out_dir + out_fmt.format(cosmo_label, ihod, iseed, "boss_north_2dflens_south"), galcone_output)
 
