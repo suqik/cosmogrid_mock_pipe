@@ -1,5 +1,6 @@
 '''
 Script to generate void random catalog
+Only generate (RA, DEC)
 '''
 
 import numpy as np
@@ -8,17 +9,10 @@ from tqdm import tqdm
 from loguru import logger
 
 from utils.io_func import *
-from utils.mkfore_utils import bounded_kde_transform, resample_bounded
-
-hod_param_fname = "cfgs/hod/hod_5params_dict.json"
-
-vfmt = "/data2/suchen/CosmoGrid/Void/cosmo_{:06d}_run_0_HOD_{}_run_0_boss_north.npy"
-rfile = "/data2/suchen/CosmoGrid/Rand/boss_cmasslowztot_north_radec.npy"
 
 def sample_radec(survey_part, nrand):
-    if survey_part == "lowzcmass":
-        # geoms = pymangle.Mangle(mask_boss_fdir + "mask_DR12v5_CMASSLOWZ_North.ply")
-        geoms = geoms_dict["lowzcmass"]
+    if survey_part == "lowz":
+        geoms = geoms_dict["lowz"]
         ra_rand, dec_rand = geoms.genrand(nrand)
         select = (geoms.weight(ra_rand, dec_rand) != 0)
         ra_rand = ra_rand[select]
@@ -26,10 +20,6 @@ def sample_radec(survey_part, nrand):
         survey_rand = np.zeros(len(ra_rand))
 
     if survey_part == "lowze2":
-        # geoms = [
-        #     pymangle.Mangle(mask_boss_fdir + "mask_DR12v5_LOWZE2_North.ply"), 
-        #     pymangle.Mangle(mask_boss_fdir + "mask_DR12v5_LOWZ_North.ply")
-        # ]
         geoms = [
             geoms_dict["lowze2"],
             geoms_dict["lowz"]
@@ -45,10 +35,6 @@ def sample_radec(survey_part, nrand):
         survey_rand = np.ones(len(ra_rand))
 
     if survey_part == "lowze3":
-        # geoms = [
-        #     pymangle.Mangle(mask_boss_fdir + "mask_DR12v5_LOWZE3_North.ply"), 
-        #     pymangle.Mangle(mask_boss_fdir + "mask_DR12v5_LOWZ_North.ply")
-        # ]
         geoms = [
             geoms_dict["lowze3"],
             geoms_dict["lowz"]
@@ -63,41 +49,50 @@ def sample_radec(survey_part, nrand):
         dec_rand = dec_rand[idx_out_mask]
         survey_rand = np.ones(len(ra_rand))*2
 
+    if survey_part == "cmass":
+        geoms = geoms_dict["cmass"]
+        ra_rand, dec_rand = geoms.genrand(nrand)
+        select = (geoms.weight(ra_rand, dec_rand) != 0)
+        ra_rand = ra_rand[select]
+        dec_rand = dec_rand[select]
+
+        survey_rand = np.ones(len(ra_rand))*4
+  
     return ra_rand, dec_rand, survey_rand
 
 if __name__ == "__main__":
 
+    hod_param_fname = "cfgs/hod/hod_5params_dict_high_ngal_wcosmo2.json"
+
+    bin_lb = 2
+    vfmt = f"/data2/suchen/CosmoGrid/high_ngal_suits/Void_bin{bin_lb}/" + "cosmo_{:06d}_run_0_HOD_{}_run_0_boss_north_2dflens_south.npy"
+    rfile = f"/data2/suchen/CosmoGrid/Rand/boss_cmass_bin{bin_lb}_north_radec.npy"
+
+    survey_name_label_dict = {
+        'lowz': 0,
+        'lowze2': 1,
+        'lowze3': 2,
+        'cmass': 4
+    }
+
+    survey_name_list = ["cmass"]
+
     logger.info("Get 3 parts number ratio")
 
-    hod_params_dict = get_hod_params(hod_param_fname)
-    cosmo_labels_tot = []
-
-    for icosmo_str in hod_params_dict.keys():
-        if len(hod_params_dict[icosmo_str]) > 0:
-            cosmo_labels_tot.append(int(icosmo_str[5:]))
+    cosmo_labels_tot = get_cosmo_name_list_process(hod_param_fname)
 
     count = 0
+    void_num = {}  
+    
+    for iname, survey_name in enumerate(survey_name_list):
+        void_num[survey_name] = 0
 
-    void_num = {}
-    void_num['lowzcmass'] = 0
-    void_num['lowze2'] = 0
-    void_num['lowze3'] = 0
+    vcat = np.load(vfmt.format(1, 0)) # only use 1 rlz to estimate the number of voids
 
-    for icosmo in tqdm(cosmo_labels_tot, desc='processing'):
-        for ihod in range(10): # we already know each cosmology has 10 hod rlzs
-            vcat = np.load(vfmt.format(icosmo, ihod))
-            void_num["lowzcmass"] += (vcat['survey'] == 0).sum()
-            void_num["lowze2"] += (vcat['survey'] == 1).sum()
-            void_num["lowze3"] += (vcat['survey'] == 2).sum()
+    for iname, survey_name in enumerate(survey_name_list):
+        void_num[survey_name] += (vcat['survey'] == survey_name_label_dict[survey_name]).sum()
 
-            count += 1
-
-
-    void_num["lowzcmass"] /= count
-    void_num["lowze2"] /= count
-    void_num["lowze3"] /= count
-
-    # tot_num = lowzcmass_num + lowze2_num + lowze3_num
+    print(void_num)
 
     logger.info("Load observational masks")
 
@@ -117,22 +112,16 @@ if __name__ == "__main__":
         masks.append(pymangle.Mangle(mask_file))
 
     geoms_dict = {}
-    geoms_dict["lowzcmass"] = pymangle.Mangle(mask_boss_fdir + "mask_DR12v5_CMASSLOWZ_North.ply")
+    geoms_dict["lowz"] = pymangle.Mangle(mask_boss_fdir + "mask_DR12v5_LOWZ_North.ply")
     geoms_dict["lowze2"] = pymangle.Mangle(mask_boss_fdir + "mask_DR12v5_LOWZE2_North.ply")
     geoms_dict["lowze3"] = pymangle.Mangle(mask_boss_fdir + "mask_DR12v5_LOWZE3_North.ply")
-    geoms_dict["lowz"] = pymangle.Mangle(mask_boss_fdir + "mask_DR12v5_LOWZ_North.ply")
-
-
-    rv_bounds = [0, 40]
-    zmin = 0.2
-    zmax = 0.4
-    Rvmin = 0
-    Rvmax = 40
+    geoms_dict["cmass"] = pymangle.Mangle(mask_boss_fdir + "mask_DR12v5_CMASS_North.ply")
 
     area_ratio_dict = {
-        'lowzcmass': 0.62,
+        'lowz': 0.62,
         'lowze2': 0.013,
-        'lowze3': 0.078
+        'lowze3': 0.078,
+        'cmass': 1.0
     }
 
     nrand_to_ndata = 5
@@ -142,7 +131,8 @@ if __name__ == "__main__":
     ra_rand = []
     dec_rand = []
     survey_rand = []
-    for lb, survey_part in enumerate(["lowzcmass", "lowze2", "lowze3"]):
+
+    for lb, survey_part in enumerate(survey_name_list):
         nvoid = void_num[survey_part]
         nrand = int(nvoid * nrand_to_ndata)
 
@@ -173,6 +163,8 @@ if __name__ == "__main__":
     rand_cat["dec"] = dec_rand
     rand_cat["w"] = 1
     rand_cat["survey"] = survey_rand
+
+    logger.info("Save random catalog")
 
     np.save(rfile, rand_cat)
 
