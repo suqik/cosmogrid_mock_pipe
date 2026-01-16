@@ -83,7 +83,8 @@ fgal_type = np.dtype(
     [
         ("ra", "f4"), 
         ("dec", "f4"), 
-        ("z", "f4"), 
+        ("z", "f4"),
+        ("zrsd", "f4"), 
         ("w", "f4"),
         ("survey", "i4")
     ]
@@ -93,7 +94,7 @@ fvoid_type = np.dtype(
     [
         ("ra", "f4"), 
         ("dec", "f4"), 
-        ("z", "f4"), 
+        ("z", "f4"),
         ("w", "f4"), 
         ("Rv", "f4"), 
         ("survey", "i4")
@@ -162,7 +163,7 @@ def get_cosmo_from_file(fname:str, otype="ccl") -> Union[dict, ccl.Cosmology]:
             h=cosmo_par["H0"]/100, 
             Omega_b=cosmo_par["Ob"], 
             Omega_c=cosmo_par["O_cdm"], 
-            A_s=cosmo_par["As"], 
+            sigma8=cosmo_par["s8"], 
             n_s=cosmo_par["ns"], 
             w0=cosmo_par["w0"], 
             wa=cosmo_par["wa"],
