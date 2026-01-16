@@ -155,11 +155,15 @@ class ModelClass():
     vdisp = 1.0
     gtable['vz'][range_] = (gtable['vz'][range_] - gtable['halo_vz'][range_]) * vdisp + gtable['halo_vz'][range_]
 
-    # RSD shift along OZ axis.
-    z_rsd = gtable['z'] + gtable['vz'] * self.rsd_shift
-    z_rsd = (z_rsd + self.box_size) % self.box_size
+    # # RSD shift along OZ axis.
+    # z_rsd = gtable['z'] + gtable['vz'] * self.rsd_shift
+    # z_rsd = (z_rsd + self.box_size) % self.box_size
 
-    gal_sample = np.rec.fromarrays([gtable['x'], gtable['y'], z_rsd, gtable['z'], gtable['gal_type']], dtype=[('x', 'f4'), ('y', 'f4'), ('z_rsd', 'f4'), ('z', 'f4'), ('gal_type', 'i4')])
+    # gal_sample = np.rec.fromarrays([gtable['x'], gtable['y'], z_rsd, gtable['z'], gtable['gal_type']], dtype=[('x', 'f4'), ('y', 'f4'), ('z_rsd', 'f4'), ('z', 'f4'), ('gal_type', 'i4')])
+    gal_sample = np.rec.fromarrays(
+      [gtable['x'], gtable['y'], gtable['z'], gtable['vx'], gtable['vy'], gtable['vz'], gtable['gal_type']], 
+      dtype=[('x', 'f4'), ('y', 'f4'), ('z', 'f4'), ('vx', 'f4'), ('vy', 'f4'), ('vz', 'f4'), ('gal_type', 'i4')]
+      )
 
     return seed, gal_sample
 
