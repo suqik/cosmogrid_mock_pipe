@@ -118,7 +118,12 @@ def box_recenter(pos:np.ndarray, center:Union[tuple,list,np.ndarray], boxsize:fl
     local_pos = ((pos-np.array(center)*boxsize)+boxsize) % boxsize
     return local_pos
     
-def cut_shell_one_box(pos:np.ndarray, gid:np.ndarray, boxsize:float, shift:Union[tuple,list,np.ndarray], rmin:float, rmax:float) -> np.ndarray:
+def cut_shell_one_box(pos:np.ndarray, gid:np.ndarray, 
+                      boxsize:float, 
+                      shift:Union[tuple,list,np.ndarray], 
+                      rmin:float, rmax:float,
+                      other_prop:np.ndarray=None
+                      ) -> Union[np.ndarray, tuple]:
     '''
     Cut out a shell within a given range from the coordinates.
 
@@ -136,21 +141,17 @@ def cut_shell_one_box(pos:np.ndarray, gid:np.ndarray, boxsize:float, shift:Union
         The minimum radius of the shell.
     rmax: float
         The maximum radius of the shell.
+    other_prop: [Optional] np.ndarray
+        Other properties to be transform simutaneously.
+        Default is None.
 
     Returns:
     -------
     local_pos: np.ndarray
         The coordinates after cutting out the shell.
+    local_prop: np.ndarray
+        Other properties after cutting out the shell.
     '''
-    # local_pos = (pos + boxsize) % boxsize
-    # local_pos += shift*boxsize
-    
-    # # cut = ((radial_dist(local_pos)>rmin)&(radial_dist(local_pos)<rmax))
-    # cut = ((np.linalg.norm(local_pos,axis=1)>rmin)&(np.linalg.norm(local_pos,axis=1)<rmax))
-    # local_pos = local_pos[cut]
-    # del cut
-    
-    # return local_pos
 
     local_pos = (pos + boxsize) % boxsize
     local_pos += shift*boxsize
@@ -158,9 +159,13 @@ def cut_shell_one_box(pos:np.ndarray, gid:np.ndarray, boxsize:float, shift:Union
     cut = ((np.linalg.norm(local_pos,axis=1)>rmin)&(np.linalg.norm(local_pos,axis=1)<rmax))
     local_pos = local_pos[cut]
     local_gid = gid[cut]
-    del cut
-    
-    return np.c_[local_pos, local_gid]
+
+    if other_prop is not None:
+        local_prop = other_prop[cut]
+        return np.c_[local_pos, local_gid], local_prop
+
+    else:
+        return np.c_[local_pos, local_gid]
 
 def search_cross_box(boxsize:float, radius:float) -> np.ndarray:
     '''
@@ -219,7 +224,11 @@ def get_cross_box_indice(boxsize:float, chi_min:float, chi_max:float) -> np.ndar
 
     return indice_all
 
-def make_lightcone_tiles(position:np.ndarray, boxsize:float, chi_min:float, chi_max:float, ctr:Union[tuple,list,np.ndarray,int]=[0,0,0]) -> np.ndarray:
+def make_lightcone_tiles(
+        position:np.ndarray, boxsize:float, 
+        chi_min:float, chi_max:float, 
+        ctr:Union[tuple,list,np.ndarray,int]=[0,0,0],
+        other_prop:np.ndarray=None) -> Union[np.ndarray, tuple]:
     '''
     Make a lightcone from the given coordinates.
 
@@ -236,12 +245,20 @@ def make_lightcone_tiles(position:np.ndarray, boxsize:float, chi_min:float, chi_
     ctr: tuple or list or np.ndarray or int
         The center of the box. Default is (0,0,0).
         If is int, will be broadcast to three dimensions.
+    other_prop: [Optional] np.ndarray
+        Other properties of the galaxy, for example velocities.
+        Default is None.
 
     Returns:
     -------
     lightcone: np.ndarray
         The positions of particles in the lightcone.
+    lightcone_prop: np.ndarray
+        Other properties of particles in the lightcone.
     '''
+    if other_prop.shape[0] != position.shape[0]:
+        raise ValueError(f"The shape of the position ({position.shape[0]}) and the property ({other_prop.shape[0]}) do not match!")
+    
     if type(ctr) is int:
         ctr = [ctr]*3
     shift_list = get_cross_box_indice(boxsize, chi_min, chi_max)
@@ -249,12 +266,26 @@ def make_lightcone_tiles(position:np.ndarray, boxsize:float, chi_min:float, chi_
     gid = np.arange(len(position)) # Global ID of each tracer, start from 0
     
     lightcone = []
-    for idx in range(len(shift_list)):
-        tmp = cut_shell_one_box(pos_rectr, gid, boxsize, shift_list[idx], chi_min, chi_max)
-        lightcone.append(tmp)
-    lightcone = np.vstack(lightcone)
 
-    return lightcone
+    if other_prop is not None:
+        lightcone_prop = []
+        for idx in range(len(shift_list)):
+            tmp_pos_id, tmp_prop = cut_shell_one_box(pos_rectr, gid, boxsize, shift_list[idx], chi_min, chi_max, other_prop=other_prop)
+            lightcone.append(tmp_pos_id)
+            lightcone_prop.append(tmp_prop)
+        
+        lightcone = np.vstack(lightcone)
+        lightcone_prop = np.vstack(lightcone_prop)
+
+        return lightcone, lightcone_prop
+
+    else:   
+        for idx in range(len(shift_list)):
+            tmp = cut_shell_one_box(pos_rectr, gid, boxsize, shift_list[idx], chi_min, chi_max)
+            lightcone.append(tmp)
+        lightcone = np.vstack(lightcone)
+
+        return lightcone
 
 def cat2shell(nside:int, **kwargs):
     '''
@@ -392,15 +423,18 @@ def apply_2dflens_geometry(galcone, mask_weight_maps, interp=True, galcone_ids=N
 
     return galcone_2dflens, galcone_ids_out
 
-def apply_nz_downsample(galcone, nofz_info, galcone_ids=None, norm=False):
+def apply_nz_downsample(galcone, nofz_info, galcone_ids=None, norm=False, add_rsd=False):
     zedges = nofz_info['zedges']
     shell_vol = nofz_info['shell_vol']
     nz_ref = nofz_info['nz_ref']
 
-    z_mock = galcone["z"]
+    if add_rsd:
+        z_mock = galcone["zrsd"]
+    else:
+        z_mock = galcone["z"]
+        
     Nz_mock, _ = np.histogram(z_mock, zedges)
     downsample_rate = nz_ref/Nz_mock*shell_vol
-
 
     if norm:
         downsample_rate /= np.max(downsample_rate)
