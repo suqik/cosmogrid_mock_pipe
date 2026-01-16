@@ -2,15 +2,30 @@
 Script to find voids in lightcone.
 '''
 
+import sys
 import pyccl as ccl
 import numpy as np
 import pymangle
 import healpy as hp
+from astropy.table import Table
 from loguru import logger
 
 from utils.io_func import *
 from utils.mkfore_utils import *
 from utils.mkback_utils import rotate_pix
+
+MOCK = True
+TEST = False
+if len(sys.argv) > 1:
+    if sys.argv[-1] == "data":
+        MOCK = False
+    if sys.argv[-1] == "test":
+        TEST = True
+
+print(f"mock: {MOCK}")
+print(f"test: {TEST}")
+
+RSD = True
 
 wdir = "/home/suchen/Program/CosmoGrid"
 
@@ -18,9 +33,14 @@ wdir = "/home/suchen/Program/CosmoGrid"
 sim_fmt = "/data3/suchen/CosmoGridV1/grid/cosmo_{:06d}/run_0/"
 hod_param_fname = f"{wdir}/cfgs/hod/hod_5params_dict_high_ngal_wcosmo2.json"
 zbin_lb = 2
-gfmt = f"/data2/suchen/CosmoGrid/high_ngal_suits/HOD_bin{zbin_lb}/" + "cosmo_{:06d}_run_0_HOD_{}_run_0_boss_north_2dflens_south.npy"
+
+cat_dirbase = "high_ngal_suits"
+if RSD:
+    cat_dirbase += "_wrsd"
+
+gfmt = f"/data2/suchen/CosmoGrid/{cat_dirbase}/HOD_bin{zbin_lb}/" + "cosmo_{:06d}_run_0_HOD_{}_run_0_boss_north_2dflens_south.npy"
 ''' output info '''
-vfmt = f"/data2/suchen/CosmoGrid/high_ngal_suits/Void_bin{zbin_lb}/" + "cosmo_{:06d}_run_0_HOD_{}_run_0_boss_north_2dflens_south.npy"
+vfmt = f"/data2/suchen/CosmoGrid/{cat_dirbase}/Void_bin{zbin_lb}/" + "cosmo_{:06d}_run_0_HOD_{}_run_0_boss_north_2dflens_south.npy"
 
 if zbin_lb == 1:
     zmin = 0.2
@@ -66,6 +86,7 @@ if VARY_HOD:
 ROT = False
 ### setup rotation angles
 if ROT:
+    logger.info("Load shear catalog mask")
     ### load shear mask to reduce storage
     src_mask = loadFitsMaps(src_mask_file)
     src_mask = src_mask[0]
@@ -114,13 +135,19 @@ def gal2void(tracer_pos_cart, cosmo_ccl, survey:int, rank=0):
 def find_voids_fullsky(galcone:np.ndarray, 
                        cosmo_ccl:ccl.Cosmology, 
                        zmin:float, zmax:float,
-                       rank:int=None):
+                       rank:int=None,
+                       wrsd=False):
     if rank is None:
         rank = 0
     ### Transform galaxy catalog to Cartesian coordinates
     logger.info("Transform to Cart coord")
 
-    gal_pos_cart = Sph2Cart(cosmo_ccl, ra=galcone['ra'], dec=galcone['dec'], z=galcone['z'])
+    ### use zrsd
+    if wrsd:
+        gal_pos_cart = Sph2Cart(cosmo_ccl, ra=galcone['ra'], dec=galcone['dec'], z=galcone['zrsd'])
+    else:
+        gal_pos_cart = Sph2Cart(cosmo_ccl, ra=galcone['ra'], dec=galcone['dec'], z=galcone['z'])
+
     ### find voids, and transform to Spherical coordinates
     logger.info("Find voids")
 
@@ -137,12 +164,18 @@ def find_voids_with_boundary_effect(galcone:np.ndarray,
                                     cosmo_ccl:ccl.Cosmology, 
                                     zmin:float, zmax:float,
                                     rank:int, 
-                                    rot_degrees=None):
+                                    rot_degrees=None,
+                                    wrsd=False):
 
     ### Transform galaxy catalog to Cartesian coordinates
     logger.info("Transform to Cart coord")
 
-    gal_pos_cart = Sph2Cart(cosmo_ccl, ra=galcone['ra'], dec=galcone['dec'], z=galcone['z'])
+    ### use zrsd
+    if wrsd:
+        gal_pos_cart = Sph2Cart(cosmo_ccl, ra=galcone['ra'], dec=galcone['dec'], z=galcone['zrsd'])
+    else:
+        gal_pos_cart = Sph2Cart(cosmo_ccl, ra=galcone['ra'], dec=galcone['dec'], z=galcone['z'])
+
     ### find voids, and transform to Spherical coordinates
     logger.info("Find voids")
     tmp_void_list = []
@@ -228,6 +261,20 @@ def select_voids_in_mask(void_lcone:np.ndarray, mask:np.ndarray):
 
     return void_lcone
 
+def load_boss_data(fname, zmin, zmax, survey_lb):
+    boss_data_tb = Table.read(fname)
+    boss_data = np.empty(len(boss_data_tb), dtype=fgal_type)
+    boss_data['ra'] = boss_data_tb['RA']
+    boss_data['dec'] = boss_data_tb['DEC']
+    boss_data['z'] = boss_data_tb['Z']
+    boss_data['w'] = boss_data_tb['WEIGHT_SYSTOT']
+    boss_data['survey'] = survey_lb*np.ones(len(boss_data_tb))
+
+    zcut = (boss_data['z'] > zmin) & (boss_data['z'] < zmax)
+    boss_data = boss_data[zcut]
+
+    return boss_data
+
 
 ''' =========================================      main routine       ================================ '''
 
@@ -238,26 +285,6 @@ if __name__ == "__main__":
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     size = comm.Get_size()
-
-    if rank == 0:
-        
-        logger.info("Read cosmo labels")
-
-        # cosmo_labels_tot = get_cosmo_name_list_original("/data3/suchen/CosmoGridV1/grid/dirnames.txt")
-        cosmo_labels_tot = get_cosmo_name_list_process(hod_param_fname)
-        ####  For test  ####
-        # cosmo_labels_tot = [1]
-        ####################
-        k, m = divmod(len(cosmo_labels_tot), size)
-        chunks = [cosmo_labels_tot[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] for i in range(size)]
-    else:
-        chunks = None
-
-    if rank == 0:
-
-        logger.info("Scattering labels")
-
-    cosmo_labels = comm.scatter(chunks, root=0)
 
     logger.info("Load mask files")
 
@@ -273,46 +300,119 @@ if __name__ == "__main__":
     for mask_fname in mask_boss_fname_list:
         masks.append(pymangle.Mangle(mask_fname))
 
-    logger.info("Load shear catalog mask")
-
-    for cosmo_label in cosmo_labels:
+    ### Process mock data
+    if MOCK:
         if rank == 0:
-            logger.info(f"Start processing cosmo_label {cosmo_label}")
+            
+            logger.info("Read cosmo labels")
 
-        cosmo_ccl = get_cosmo_from_file(sim_fmt.format(cosmo_label) + "params.yml", otype='ccl')
+            # cosmo_labels_tot = get_cosmo_name_list_original("/data3/suchen/CosmoGridV1/grid/dirnames.txt")
+            cosmo_labels_tot = get_cosmo_name_list_process(hod_param_fname)
+            ####  For test  ####
+            if TEST:
+                cosmo_labels_tot = [1]
+            ####################
+            k, m = divmod(len(cosmo_labels_tot), size)
+            chunks = [cosmo_labels_tot[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] for i in range(size)]
+        else:
+            chunks = None
 
-        if ROT:
-            for imask, new_src_mask in enumerate(new_src_mask_list):
+        if rank == 0:
 
-                logger.info(f"Rotation {imask}, rotation angle {rot_degrees_list[imask]}")
+            logger.info("Scattering labels")
 
-                gfile = "/data2/suchen/CosmoGrid/fix_HOD_rots/cosmo_{:06d}_run_0_HOD_0_run_0_boss_north_2dflens_south_rot{}.npy".format(cosmo_label, imask)
-                galcone = np.load(gfile)
-                ## boss galaxy
-                boss_cut = galcone['survey'] != 3
-                galcone = galcone[boss_cut]
+        cosmo_labels = comm.scatter(chunks, root=0)
 
-                boss_lowzcmasstot_void = find_voids_with_boundary_effect(galcone, geoms, masks, cosmo_ccl, zmin, zmax, rank, rot_degrees=rot_degrees_list[imask])
+        for cosmo_label in cosmo_labels:
+            if rank == 0:
+                logger.info(f"Start processing cosmo_label {cosmo_label}")
 
-                boss_lowzcmasstot_void = select_voids_in_mask(boss_lowzcmasstot_void, new_src_mask)
+            cosmo_ccl = get_cosmo_from_file(sim_fmt.format(cosmo_label) + "params.yml", otype='ccl')
 
-                logger.info("Save void catalog")
+            if VARY_HOD:
+                for ihod in range(nhod_per_cosmo):
+                    gfile = gfmt.format(cosmo_label, ihod)
+                    galcone = np.load(gfile)
+                    # ### boss galaxy
+                    # boss_cut = galcone['survey'] != 3
+                    # galcone = galcone[boss_cut]
 
-                vfile = "/data2/suchen/CosmoGrid/fix_HOD_Void_rots/cosmo_{:06d}_run_0_HOD_0_run_0_boss_north_rot{}.npy".format(cosmo_label, imask)
-                np.save(vfile, boss_lowzcmasstot_void)
-        elif VARY_HOD:
-            for ihod in range(nhod_per_cosmo):
-                gfile = gfmt.format(cosmo_label, ihod)
-                galcone = np.load(gfile)
-                # ### boss galaxy
-                # boss_cut = galcone['survey'] != 3
-                # galcone = galcone[boss_cut]
+                    boss_lowzcmasstot_2dflens_void = find_voids_with_boundary_effect(galcone, geoms, masks, cosmo_ccl, zmin, zmax, rank)
 
-                boss_lowzcmasstot_2dflens_void = find_voids_with_boundary_effect(galcone, geoms, masks, cosmo_ccl, zmin, zmax, rank)
+                    logger.info("Save void catalog")
 
-                # boss_lowzcmasstot_void = select_voids_in_mask(boss_lowzcmasstot_void, src_mask)
+                    vfile = vfmt.format(cosmo_label, ihod)
+                    np.save(vfile, boss_lowzcmasstot_2dflens_void)
+            else:
+                if ROT:
+                    for imask, new_src_mask in enumerate(new_src_mask_list):
 
-                logger.info("Save void catalog")
+                        logger.info(f"Rotation {imask}, rotation angle {rot_degrees_list[imask]}")
 
-                vfile = vfmt.format(cosmo_label, ihod)
-                np.save(vfile, boss_lowzcmasstot_2dflens_void)
+                        gfile = "/data2/suchen/CosmoGrid/fix_HOD_rots/cosmo_{:06d}_run_0_HOD_0_run_0_boss_north_2dflens_south_rot{}.npy".format(cosmo_label, imask)
+                        galcone = np.load(gfile)
+                        ## boss galaxy
+                        boss_cut = galcone['survey'] != 3
+                        galcone = galcone[boss_cut]
+
+                        boss_lowzcmasstot_void = find_voids_with_boundary_effect(galcone, geoms, masks, cosmo_ccl, zmin, zmax, rank, rot_degrees=rot_degrees_list[imask])
+
+                        boss_lowzcmasstot_void = select_voids_in_mask(boss_lowzcmasstot_void, new_src_mask)
+
+                        logger.info("Save void catalog")
+
+                        vfile = "/data2/suchen/CosmoGrid/fix_HOD_Void_rots/cosmo_{:06d}_run_0_HOD_0_run_0_boss_north_rot{}.npy".format(cosmo_label, imask)
+                        np.save(vfile, boss_lowzcmasstot_void)
+                else:
+                    gfile = gfmt.format(cosmo_label)
+                    galcone = np.load(gfile)
+                    # ### boss galaxy
+                    # boss_cut = galcone['survey'] != 3
+                    # galcone = galcone[boss_cut]
+
+                    boss_lowzcmasstot_2dflens_void = find_voids_with_boundary_effect(galcone, geoms, masks, cosmo_ccl, zmin, zmax, rank)
+
+                    logger.info("Save void catalog")
+
+                    vfile = vfmt.format(cosmo_label, ihod)
+                    np.save(vfile, boss_lowzcmasstot_2dflens_void)
+
+    ### Process real data
+    else:
+        ### initialize cosmology
+        logger.info("Assume Planck 2015 cosmology.")
+        cosmo_ccl = ccl.Cosmology(Omega_c=0.26, Omega_b=0.049, h=0.6774, sigma8=0.816, n_s=0.9667)
+
+        if zbin_lb == 1:
+            logger.info("Make LOWZ voids")
+            logger.info("zmin: {:.2f}, zmax: {:.2f}".format(zmin, zmax))
+
+            gfile = "/data2/suchen/BOSS_dr12/SDSS_DR12_orig/galaxy_DR12v5_CMASSLOWZ_North.fits"
+            galcone_lowz = load_boss_data(gfile, zmin, zmax, survey_lb=0)
+            gfile = "/data2/suchen/BOSS_dr12/SDSS_DR12_orig/galaxy_DR12v5_LOWZE2_North_trimmed.fits"
+            galcone_lowze2 = load_boss_data(gfile, zmin, zmax, survey_lb=1)
+            gfile = "/data2/suchen/BOSS_dr12/SDSS_DR12_orig/galaxy_DR12v5_LOWZE3_North_trimmed.fits"
+            galcone_lowze3 = load_boss_data(gfile, zmin, zmax, survey_lb=2)
+
+            galcone = np.concatenate([galcone_lowz, galcone_lowze2, galcone_lowze3])
+
+            bossdata_lowz_void = find_voids_with_boundary_effect(galcone, geoms, masks, cosmo_ccl, zmin, zmax, rank=1234)
+
+            logger.info("Save void catalog")
+
+            vfile = "catalogs/bossdata_lowz_void.npy"
+            np.save(vfile, bossdata_lowz_void)
+
+        if zbin_lb == 2:
+            logger.info("Make CMASS voids")
+            logger.info("zmin: {:.2f}, zmax: {:.2f}".format(zmin, zmax))
+
+            gfile = "/data2/suchen/BOSS_dr12/SDSS_DR12_orig/galaxy_DR12v5_CMASS_North.fits"
+            galcone = load_boss_data(gfile, zmin, zmax, survey_lb=4)
+
+            bossdata_cmass_void = find_voids_with_boundary_effect(galcone, geoms, masks, cosmo_ccl, zmin, zmax, rank=1234)
+
+            logger.info("Save void catalog")
+
+            vfile = "catalogs/bossdata_cmass_void.npy"
+            np.save(vfile, bossdata_cmass_void)
