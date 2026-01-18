@@ -24,6 +24,26 @@ if len(sys.argv) > 1:
 
 RSD = True
 logger.info(f"RSD: {RSD}")
+USE_FID = True
+
+if USE_FID:
+    cosmo_ccl_fid = ccl.Cosmology(
+        Omega_c=0.26, 
+        Omega_b=0.049, 
+        h=0.6774, 
+        sigma8=0.816, 
+        n_s=0.9667
+    )
+    logger.info(f"Use fiducial cosmology")
+    logger.info(f"Cosmology parameters:")
+    logger.info(f"h = {cosmo_ccl_fid["h"]:.4f}")
+    logger.info(f"Omega_c = {cosmo_ccl_fid["Omega_c"]:.3f}")
+    logger.info(f"Omega_b = {cosmo_ccl_fid["Omega_b"]:.3f}")
+    logger.info(f"n_s = {cosmo_ccl_fid["n_s"]:.4f}")
+    logger.info(f"sigma8 = {cosmo_ccl_fid["sigma8"]:.3f}")
+
+else:
+    logger.info("Use true cosmology")
 
 wdir = "/home/suchen/Program/CosmoGrid"
 
@@ -168,6 +188,9 @@ def find_voids_with_boundary_effect(galcone:np.ndarray,
     ### Transform galaxy catalog to Cartesian coordinates
     logger.info("Transform to Cart coord")
 
+    logger.debug(f"{cosmo_ccl_fid["Omega_c"]}")
+    logger.debug(f"{cosmo_ccl_fid["sigma8"]}")
+
     ### use zrsd
     if wrsd:
         gal_pos_cart = Sph2Cart(cosmo_ccl, ra=galcone['ra'], dec=galcone['dec'], z=galcone['zrsd'])
@@ -308,7 +331,7 @@ if __name__ == "__main__":
             cosmo_labels_tot = get_cosmo_name_list_process(hod_param_fname)
             ####  For test  ####
             if TEST:
-                cosmo_labels_tot = [1]
+                cosmo_labels_tot = [1,3]
             ####################
             k, m = divmod(len(cosmo_labels_tot), size)
             chunks = [cosmo_labels_tot[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] for i in range(size)]
@@ -321,11 +344,14 @@ if __name__ == "__main__":
 
         cosmo_labels = comm.scatter(chunks, root=0)
 
-        for cosmo_label in cosmo_labels:
+        for iters, cosmo_label in enumerate(cosmo_labels):
             if rank == 0:
                 logger.info(f"Start processing cosmo_label {cosmo_label}")
 
-            cosmo_ccl = get_cosmo_from_file(sim_fmt.format(cosmo_label) + "params.yml", otype='ccl')
+            if USE_FID:
+                cosmo_ccl = cosmo_ccl_fid
+            else:
+                cosmo_ccl = get_cosmo_from_file(sim_fmt.format(cosmo_label) + "params.yml", otype='ccl')
 
             if VARY_HOD:
                 for ihod in range(nhod_per_cosmo):
@@ -334,7 +360,6 @@ if __name__ == "__main__":
                     # ### boss galaxy
                     # boss_cut = galcone['survey'] != 3
                     # galcone = galcone[boss_cut]
-
                     boss_lowzcmasstot_2dflens_void = find_voids_with_boundary_effect(galcone, geoms, masks, cosmo_ccl, zmin, zmax, rank, wrsd=RSD)
 
                     logger.info("Save void catalog")
@@ -379,7 +404,8 @@ if __name__ == "__main__":
     else:
         ### initialize cosmology
         logger.info("Assume Planck 2015 cosmology.")
-        cosmo_ccl = ccl.Cosmology(Omega_c=0.26, Omega_b=0.049, h=0.6774, sigma8=0.816, n_s=0.9667)
+        # cosmo_ccl = ccl.Cosmology(Omega_c=0.26, Omega_b=0.049, h=0.6774, sigma8=0.816, n_s=0.9667)
+        cosmo_ccl = cosmo_ccl_fid
 
         if zbin_lb == 1:
             logger.info("Make LOWZ voids")
