@@ -22,10 +22,8 @@ if len(sys.argv) > 1:
     if sys.argv[-1] == "test":
         TEST = True
 
-print(f"mock: {MOCK}")
-print(f"test: {TEST}")
-
 RSD = True
+logger.info(f"RSD: {RSD}")
 
 wdir = "/home/suchen/Program/CosmoGrid"
 
@@ -337,7 +335,7 @@ if __name__ == "__main__":
                     # boss_cut = galcone['survey'] != 3
                     # galcone = galcone[boss_cut]
 
-                    boss_lowzcmasstot_2dflens_void = find_voids_with_boundary_effect(galcone, geoms, masks, cosmo_ccl, zmin, zmax, rank)
+                    boss_lowzcmasstot_2dflens_void = find_voids_with_boundary_effect(galcone, geoms, masks, cosmo_ccl, zmin, zmax, rank, wrsd=RSD)
 
                     logger.info("Save void catalog")
 
@@ -396,7 +394,8 @@ if __name__ == "__main__":
 
             galcone = np.concatenate([galcone_lowz, galcone_lowze2, galcone_lowze3])
 
-            bossdata_lowz_void = find_voids_with_boundary_effect(galcone, geoms, masks, cosmo_ccl, zmin, zmax, rank=1234)
+            ### For real data do not need to consider RSD
+            bossdata_lowz_void = find_voids_with_boundary_effect(galcone, geoms, masks, cosmo_ccl, zmin, zmax, rank=1234, wrsd=False)
 
             logger.info("Save void catalog")
 
@@ -410,7 +409,7 @@ if __name__ == "__main__":
             gfile = "/data2/suchen/BOSS_dr12/SDSS_DR12_orig/galaxy_DR12v5_CMASS_North.fits"
             galcone = load_boss_data(gfile, zmin, zmax, survey_lb=4)
 
-            bossdata_cmass_void = find_voids_with_boundary_effect(galcone, geoms, masks, cosmo_ccl, zmin, zmax, rank=1234)
+            bossdata_cmass_void = find_voids_with_boundary_effect(galcone, geoms, masks, cosmo_ccl, zmin, zmax, rank=1234, wrsd=False)
 
             logger.info("Save void catalog")
 
