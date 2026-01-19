@@ -62,11 +62,11 @@ def sample_radec(survey_part, nrand):
 
 if __name__ == "__main__":
 
-    hod_param_fname = "cfgs/hod/hod_5params_dict_high_ngal_wcosmo2.json"
+    ADD_Z_RV = True
+    SURVEY_NAME = "lowz"
 
-    bin_lb = 2
-    vfmt = f"/data2/suchen/CosmoGrid/high_ngal_suits/Void_bin{bin_lb}/" + "cosmo_{:06d}_run_0_HOD_{}_run_0_boss_north_2dflens_south.npy"
-    rfile = f"/data2/suchen/CosmoGrid/Rand/boss_cmass_bin{bin_lb}_north_radec.npy"
+    if ADD_Z_RV:
+        from utils.mkfore_utils import bounded_kde_transform, resample_bounded
 
     survey_name_label_dict = {
         'lowz': 0,
@@ -75,22 +75,54 @@ if __name__ == "__main__":
         'cmass': 4
     }
 
-    survey_name_list = ["cmass"]
+    area_ratio_dict = {
+        'lowz': 0.62,
+        'lowze2': 0.013,
+        'lowze3': 0.078,
+        'cmass': 1.0
+    }
 
-    logger.info("Get 3 parts number ratio")
+    nrand_to_ndata = 5
 
-    cosmo_labels_tot = get_cosmo_name_list_process(hod_param_fname)
+    if SURVEY_NAME == "cmass":
+        survey_name_list = ["cmass"]
 
-    count = 0
-    void_num = {}  
+        vfile = "catalogs/bossdata_cmass_void.npy"
+        vcat = np.load(vfile) 
+
+        z_rv_bounds = [
+            (0.4, 0.6),
+            (0.0, 60.0)
+        ]
+        ### output file name
+        rfile = f"/data2/suchen/CosmoGrid/Rand/boss_cmass_north_radec.npy"    
+
+    if SURVEY_NAME == "lowz":
+        survey_name_list = ["lowz", "lowze2", "lowze3"]
+
+        vfile = "catalogs/bossdata_lowz_void.npy"
+        vcat = np.load(vfile) 
+
+        z_rv_bounds = [
+            (0.2, 0.4),
+            (0.0, 60.0)
+        ]
+        ### output file name
+        rfile = f"/data2/suchen/CosmoGrid/Rand/boss_lowz_north_radec.npy"   
+
+    ### Announcements
+    logger.info("Info")
+    logger.info(f"Survey name: {SURVEY_NAME}") 
+    logger.info(f"Sample p(z,Rv): {ADD_Z_RV}")
+    logger.info(f"Nrand/Ndata = {nrand_to_ndata:d}")
+    logger.info(f"Survey name list: {survey_name_list}")
     
-    for iname, survey_name in enumerate(survey_name_list):
-        void_num[survey_name] = 0
+    ### Get number of voids
+    logger.info("Get void number ratio")
 
-    vcat = np.load(vfmt.format(1, 0)) # only use 1 rlz to estimate the number of voids
-
+    void_num = {}  
     for iname, survey_name in enumerate(survey_name_list):
-        void_num[survey_name] += (vcat['survey'] == survey_name_label_dict[survey_name]).sum()
+        void_num[survey_name] = (vcat['survey'] == survey_name_label_dict[survey_name]).sum()
 
     print(void_num)
 
@@ -112,24 +144,22 @@ if __name__ == "__main__":
         masks.append(pymangle.Mangle(mask_file))
 
     geoms_dict = {}
-    geoms_dict["lowz"] = pymangle.Mangle(mask_boss_fdir + "mask_DR12v5_LOWZ_North.ply")
-    geoms_dict["lowze2"] = pymangle.Mangle(mask_boss_fdir + "mask_DR12v5_LOWZE2_North.ply")
-    geoms_dict["lowze3"] = pymangle.Mangle(mask_boss_fdir + "mask_DR12v5_LOWZE3_North.ply")
-    geoms_dict["cmass"] = pymangle.Mangle(mask_boss_fdir + "mask_DR12v5_CMASS_North.ply")
-
-    area_ratio_dict = {
-        'lowz': 0.62,
-        'lowze2': 0.013,
-        'lowze3': 0.078,
-        'cmass': 1.0
-    }
-
-    nrand_to_ndata = 5
+    if "lowz" in survey_name_list:
+        geoms_dict["lowz"] = pymangle.Mangle(mask_boss_fdir + "mask_DR12v5_LOWZ_North.ply")
+    if "lowze2" in survey_name_list:
+        geoms_dict["lowze2"] = pymangle.Mangle(mask_boss_fdir + "mask_DR12v5_LOWZE2_North.ply")
+    if "lowze3" in survey_name_list:
+        geoms_dict["lowze3"] = pymangle.Mangle(mask_boss_fdir + "mask_DR12v5_LOWZE3_North.ply")
+    if "cmass" in survey_name_list:
+        geoms_dict["cmass"] = pymangle.Mangle(mask_boss_fdir + "mask_DR12v5_CMASS_North.ply")
 
     logger.info("randomly sample RA DEC")
 
     ra_rand = []
     dec_rand = []
+    if ADD_Z_RV:
+        z_rand = []
+        Rv_rand = []
     survey_rand = []
 
     for lb, survey_part in enumerate(survey_name_list):
@@ -140,13 +170,25 @@ if __name__ == "__main__":
 
         nrand = int(nrand/area_ratio_dict[survey_part])
         ra_rand_, dec_rand_, survey_rand_ = sample_radec(survey_part, nrand)
+
         ra_rand.append(ra_rand_)
         dec_rand.append(dec_rand_)
         survey_rand.append(survey_rand_)
+
+        ### if sampling p(z,Rv) from data
+        if ADD_Z_RV:
+            bounded_kde = bounded_kde_transform(np.c_[vcat['z'], vcat['Rv']], z_rv_bounds)
+            z_rand_, Rv_rand_ = resample_bounded(bounded_kde, len(ra_rand_), z_rv_bounds)
+            z_rand.append(z_rand_)
+            Rv_rand.append(Rv_rand_)
     
     ra_rand = np.concatenate(ra_rand)
     dec_rand = np.concatenate(dec_rand)
     survey_rand = np.concatenate(survey_rand)
+    
+    if ADD_Z_RV:
+        z_rand = np.concatenate(z_rand)
+        Rv_rand = np.concatenate(Rv_rand)
 
     logger.info("Apply boss observational geometry")
     
@@ -157,6 +199,10 @@ if __name__ == "__main__":
     ra_rand = ra_rand[~total_masked_idx]
     dec_rand = dec_rand[~total_masked_idx]
     survey_rand = survey_rand[~total_masked_idx]
+    
+    if ADD_Z_RV:
+        z_rand = z_rand[~total_masked_idx]
+        Rv_rand = Rv_rand[~total_masked_idx]
 
     rand_cat = np.empty(len(ra_rand), dtype=fvoid_type)
     rand_cat["ra"] = ra_rand
@@ -164,8 +210,10 @@ if __name__ == "__main__":
     rand_cat["w"] = 1
     rand_cat["survey"] = survey_rand
 
+    if ADD_Z_RV:
+        rand_cat["z"] = z_rand
+        rand_cat["Rv"] = Rv_rand
+
     logger.info("Save random catalog")
 
     np.save(rfile, rand_cat)
-
-    # >>> =================================================================== <<<
