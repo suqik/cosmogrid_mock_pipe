@@ -20,7 +20,9 @@ redshift_src_list = np.concatenate([np.arange(0.1,1.0,0.05), np.arange(1.0, 2.0,
 SURVEY_NAME = "KiDS"
 
 sigma_e = 0.3 # Set `None` if do not add shape noise
-seed = 0 ### initial seed of shape noise
+seed_SN = 0 ### initial seed of shape noise
+photo_z_err = 0.01 # Set `None` if do not add photo-z error
+seed_Phz = 26120
 
 if SURVEY_NAME == "KiDS":
     #### specify total tomographic bins
@@ -217,16 +219,17 @@ if __name__ == "__main__":
         ### generate background galaxies for each tomographic bin
         logger.info("Generate background galaxies")
 
-        for itomo in range(3,4):
+        for itomo in [2,4]:
             logger.info("Tomographic bin {}".format(itomo+1))
             if not ROT:
                 ofilename = os.path.join(out_dir, out_fmt.format(cosmo_label, itomo+1))
 
                 if nofz_file_fmt is not None:
-                    bg_galcat = gen_gal_positions(ngal_list[itomo], mask, nofz_dict[f'tomo{itomo+1}'], logger)
+                    bg_galcat = gen_gal_positions(ngal_list[itomo], mask, nofz_dict[f'tomo{itomo+1}'], photo_z_err=photo_z_err, seed=seed_Phz, logger=logger)
                 else:
-                    bg_galcat = gen_gal_positions(ngal_list[itomo], mask, nofz, logger)
-                bg_galcat = get_gal_shear(bg_galcat, shear_map_dict, sigma_e=sigma_e, seed=seed+idx)
+                    bg_galcat = gen_gal_positions(ngal_list[itomo], mask, nofz, photo_z_err=photo_z_err, seed=seed_Phz, logger=logger)
+
+                bg_galcat = get_gal_shear(bg_galcat, shear_map_dict, sigma_e=sigma_e, seed=seed_SN+idx)
 
                 np.save(ofilename, bg_galcat)
             
@@ -236,12 +239,18 @@ if __name__ == "__main__":
                     
                     logger.info(f"Rotation {ipart}, rotation angle {rot_degrees_list[ipart]}")
                     
+                    ofilename = os.path.join(out_dir + out_fmt.format(cosmo_label, itomo+1, ipart))
+                    
                     curr_mask = new_mask_list[ipart]
 
-                    bg_galcat = gen_gal_positions(ngal_list[itomo], curr_mask, nofz_dict[f'tomo{itomo+1}'])
-                    bg_galcat = get_gal_shear(bg_galcat, shear_map_dict, sigma_e=sigma_e, seed=seed+idx)
+                    if nofz_file_fmt is not None:
+                        bg_galcat = gen_gal_positions(ngal_list[itomo], curr_mask, nofz_dict[f'tomo{itomo+1}'], photo_z_err=photo_z_err, seed=seed_Phz, logger=logger)
+                    else:
+                        bg_galcat = gen_gal_positions(ngal_list[itomo], curr_mask, nofz, photo_z_err=photo_z_err, seed=seed_Phz, logger=logger)
 
-                    np.save(out_dir + out_fmt.format(cosmo_label, itomo+1, ipart), bg_galcat)
+                    bg_galcat = get_gal_shear(bg_galcat, shear_map_dict, sigma_e=sigma_e, seed=seed_SN+idx)
+
+                    np.save(ofilename, bg_galcat)
 
     logger.info("Done.")
     end = datetime.datetime.now()
