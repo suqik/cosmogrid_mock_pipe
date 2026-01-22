@@ -18,10 +18,12 @@ wdir = "/home/suchen/Program/CosmoGrid"
 
 ''' 1. Simulation info '''
 
-sim_fmt = "/data3/suchen/CosmoGridV1/grid/cosmo_{:06d}/run_0/"
+sim_fmt = "/data3/suchen/CosmoGridV1/grid/cosmo_{:06d}/run_{:d}/"
 halo_fmt = "pkd_halos/CosmoML.{:05d}.fofstats.0"
 # redshift_label = 120 # corresponding to z~0.3
 redshift_label = 110 # corresponding to z~0.51
+
+rlz_label = 0 # realization label. Note only partial cosmologies have multiple rlzs. (~400)
 
 lb_z_file = "/data3/suchen/CosmoGridV1/label_z_table.txt"
 lb_z_tb = np.loadtxt(lb_z_file)
@@ -34,14 +36,30 @@ redshift = lb_z_tb[redshift_label,1]
 if redshift_label == 120:
     zmin = 0.2
     zmax = 0.4
-    zbin_lb = 1
+    zbin_name = "lowz"
     boss_part_names = ['boss_lowzcmass', 'boss_lowze2', 'boss_lowze3']
+    # boss_part_names = []
 
 elif redshift_label == 110:
     zmin = 0.4
     zmax = 0.6
-    zbin_lb = 2
+    zbin_name = "cmass"
     boss_part_names = ['boss_cmass']
+    # boss_part_names = []
+
+MK_2DFLENS = True # if make 2dflens mock
+
+if len(boss_part_names) > 0:
+    survey_specify = "boss_north"
+    if MK_2DFLENS:
+        survey_specify += "_2dflens_south"
+else:
+    if MK_2DFLENS:
+        survey_specify = "2dflens_south"
+    else:
+        survey_specify = ""
+
+print(survey_specify)
 
 ''' 2. Mask file info'''
 
@@ -82,8 +100,8 @@ nz_2dflens_fname = nz_fbase + "nbar_2dFLens_south_data.dat"
 
 ''' 4. Output files '''
 
-out_dir = f"/data2/suchen/CosmoGrid/high_ngal_suits_wrsd/HOD_bin{zbin_lb}/"
-out_fmt = "cosmo_{:06d}_run_0_HOD_{:d}_run_{:d}_{:s}.npy"
+out_dir = f"/data2/suchen/CosmoGrid/high_ngal_suits_wrsd/HOD_{zbin_name}/"
+out_fmt = "cosmo_{:06d}_run_{:d}_HOD_{:d}_run_{:d}_{:s}.npy"
 hod_param_out = f"{wdir}/cfgs/hod/hod_5params_dict_high_ngal_wcosmo2.json"
 
 ''' 5. HOD setup '''
@@ -175,8 +193,8 @@ if ROT:
 
 
 ''' main routines '''
-def load_halocat(cosmo_label, ofmt='hod'):
-    cpar_file = sim_fmt.format(cosmo_label) + "params.yml"
+def load_halocat(cosmo_label, rlz_label, ofmt='hod'):
+    cpar_file = sim_fmt.format(cosmo_label, rlz_label) + "params.yml"
 
     logger.info(f"Load cosmology from file {cpar_file}")
     
@@ -185,7 +203,7 @@ def load_halocat(cosmo_label, ofmt='hod'):
     pmass = rhoc0*OmegaM*(Lbox/Nside)**3 # Msun/h
 
     ### load pkd halo catalog
-    halo_file = sim_fmt.format(cosmo_label) + halo_fmt.format(redshift_label)
+    halo_file = sim_fmt.format(cosmo_label, rlz_label) + halo_fmt.format(redshift_label)
     
     logger.info(f"Load PKD halo from file {halo_file}")
     
@@ -382,7 +400,9 @@ def make_survey(gal_pos:np.ndarray, masks:dict, cosmo_ccl:ccl.Cosmology, nofz_in
 
     galcone_boss_tot = []
     galcone_id_boss_tot = []
-    masks_boss = masks['boss_masks']
+
+    if len(boss_part_names) > 0:
+        masks_boss = masks['boss_masks']
 
     if 'boss_lowzcmass' in boss_part_names:
 
@@ -461,20 +481,34 @@ def make_survey(gal_pos:np.ndarray, masks:dict, cosmo_ccl:ccl.Cosmology, nofz_in
         galcone_boss_tot.append(galcone_boss)
         galcone_id_boss_tot.append(galcone_id_boss)
 
-    galcone_boss = np.concatenate(galcone_boss_tot)
-    galcone_id_boss = np.concatenate(galcone_id_boss_tot)
+    if len(galcone_boss_tot) > 0:
+        galcone_boss = np.concatenate(galcone_boss_tot)
+        galcone_id_boss = np.concatenate(galcone_id_boss_tot)
+    else:
+        galcone_boss = []
+        galcone_id_boss = []
 
-    logger.info("Apply 2dFLens survey geometry cut")
+    if MK_2DFLENS:
 
-    ### apply 2dFLens survey geometry cut
-    masks_2dflens = masks['2dflens']
-    galcone_2dflens, galcone_id_2dflens = apply_2dflens_geometry(galcone_output, masks_2dflens, galcone_ids=galcone_id)
-    galcone_2dflens, galcone_id_2dflens = apply_nz_downsample(galcone_2dflens, nofz_info["2dflens"], galcone_ids=galcone_id_2dflens, norm=False, add_rsd=ADD_RSD)
+        logger.info("Making 2dFLenS-like mock")
 
-    galcone_2dflens['survey'] = 3
+        ### apply 2dFLens survey geometry cut
+        masks_2dflens = masks['2dflens']
+        galcone_2dflens, galcone_id_2dflens = apply_2dflens_geometry(galcone_output, masks_2dflens, galcone_ids=galcone_id)
+        galcone_2dflens, galcone_id_2dflens = apply_nz_downsample(galcone_2dflens, nofz_info["2dflens"], galcone_ids=galcone_id_2dflens, norm=False, add_rsd=ADD_RSD)
 
-    galcone_id = np.append(galcone_id_boss, galcone_id_2dflens)
-    galcone_output = np.append(galcone_boss, galcone_2dflens)
+        galcone_2dflens['survey'] = 3
+
+        if len(galcone_boss) > 0:
+            galcone_id = np.append(galcone_id_boss, galcone_id_2dflens)
+            galcone_output = np.append(galcone_boss, galcone_2dflens)
+        else:
+            galcone_id = galcone_id_2dflens
+            galcone_output = galcone_2dflens
+    
+    else:
+        galcone_output = galcone_boss
+        galcone_id = galcone_id_boss
     
     ### check replication
     if check_repeat:
@@ -546,11 +580,13 @@ if __name__ == "__main__":
     if 'boss_lowze2' in boss_part_names or 'boss_lowze3' in boss_part_names:
         masks['boss_geom']['boss_lowz'] = pymangle.Mangle(geom_boss_fname_list['boss_lowz'])
 
-    for mask_file in mask_boss_fname_list:
-        masks['boss_masks'].append(pymangle.Mangle(mask_file))
+    if len(boss_part_names) > 0:
+        for mask_file in mask_boss_fname_list:
+            masks['boss_masks'].append(pymangle.Mangle(mask_file))
 
     ### load 2dflens survey geometry
-    masks['2dflens'] = loadFitsMaps(mask_weight_2df_fname)
+    if MK_2DFLENS:
+        masks['2dflens'] = loadFitsMaps(mask_weight_2df_fname)
 
     logger.info("Load n(z) files.")
 
@@ -569,11 +605,12 @@ if __name__ == "__main__":
         nofz_info['boss_cmass']['nz_ref'] *= 0.93 
 
     ### 2dflens
-    nofz_info['2dflens'] = {}
-    nofz = np.loadtxt(nz_2dflens_fname, usecols=(1,2,3,4)) # zmin, zmax, nz, shell_vol
-    argstart = np.argwhere(nofz[:,0] == zmin)[0,0]
-    argend = np.argwhere(nofz[:,1] == zmax)[0,0]
-    nofz_info = make_nofz_info(nofz_info, '2dflens', nofz[argstart:argend+2,0], nofz[argstart:argend+1,3], nofz[argstart:argend+1,2])
+    if MK_2DFLENS:
+        nofz_info['2dflens'] = {}
+        nofz = np.loadtxt(nz_2dflens_fname, usecols=(1,2,3,4)) # zmin, zmax, nz, shell_vol
+        argstart = np.argwhere(nofz[:,0] == zmin)[0,0]
+        argend = np.argwhere(nofz[:,1] == zmax)[0,0]
+        nofz_info = make_nofz_info(nofz_info, '2dflens', nofz[argstart:argend+2,0], nofz[argstart:argend+1,3], nofz[argstart:argend+1,2])
 
 
     logger.info("Main process.")
@@ -587,7 +624,7 @@ if __name__ == "__main__":
         logger.info(f"Start processing cosmo_label {cosmo_label}")
 
         ### initialize cosmology
-        cosmo_ccl = get_cosmo_from_file(sim_fmt.format(cosmo_label) + "params.yml", otype="ccl")
+        cosmo_ccl = get_cosmo_from_file(sim_fmt.format(cosmo_label, rlz_label) + "params.yml", otype="ccl")
 
         ### initialize parameter dictionary
         if VARY_HOD:
@@ -600,7 +637,7 @@ if __name__ == "__main__":
         ###################################
 
         if HALO_ONLY:
-            halo_pos_mass_dict = get_pkd_halo_attrs(os.path.join(sim_fmt.format(cosmo_label), halo_fmt.format(redshift_label)), 
+            halo_pos_mass_dict = get_pkd_halo_attrs(os.path.join(sim_fmt.format(cosmo_label, rlz_label), halo_fmt.format(redshift_label)), 
                                                     ["pos", "mass"], Lbox, redshift)
 
             ### choose the most massive halos according to reference ngal
@@ -615,11 +652,10 @@ if __name__ == "__main__":
             gal_pos = halo_pos_mass["pos"][:Ngal]
             galcone_output = make_survey(gal_pos, masks, cosmo_ccl, nofz_info, check_repeat=False)
             ## save as binary file
-            out_dir = "/data2/suchen/CosmoGrid/HALO_only_suits/HOD_bin2/"
-            np.save(out_dir + out_fmt.format(cosmo_label, 0, 0, "boss_north_2dflens_south"), galcone_output)
+            np.save(out_dir + out_fmt.format(cosmo_label, rlz_label, 0, 0, survey_specify), galcone_output)
         else:
             ### load halo catalog
-            halo_file, hod_halocat, OmegaM = load_halocat(cosmo_label, ofmt='hod')
+            halo_file, hod_halocat, OmegaM = load_halocat(cosmo_label, rlz_label, ofmt='hod')
             ### fix HOD run
             if FIX_HOD:
                 ### fix HOD run
@@ -641,13 +677,11 @@ if __name__ == "__main__":
                             logger.info(f"Rotation {irot}: rot_angles (zyx) = {rot_degrees}")
 
                             galcone_output = make_survey(gal_pos, masks, cosmo_ccl, nofz_info, check_repeat=False, rot_degrees=rot_degrees)
-                            out_dir = "/data2/suchen/CosmoGrid/fix_HOD_rots/"
-                            np.save(out_dir + out_fmt.format(cosmo_label, 0, iseed, f"boss_north_2dflens_south_rot{irot}"), galcone_output)
+                            np.save(out_dir + out_fmt.format(cosmo_label, rlz_label, 0, iseed, f"{survey_specify}_rot{irot}"), galcone_output)
                     else:
                         galcone_output = make_survey(gal_pos, masks, cosmo_ccl, nofz_info, check_repeat=False)
                         ## save as binary file
-                        out_dir = "/data2/suchen/CosmoGrid/fix_HOD_suits/HOD_bin2/"
-                        np.save(out_dir + out_fmt.format(cosmo_label, 0, iseed, "boss_north_2dflens_south"), galcone_output)
+                        np.save(out_dir + out_fmt.format(cosmo_label, rlz_label, 0, iseed, survey_specify), galcone_output)
             ### vary HOD run
             else:
                 if not LOAD_HOD_PAR:
@@ -692,7 +726,7 @@ if __name__ == "__main__":
                             else:
                                 galcone_output = make_survey(gal_pos, masks, cosmo_ccl, nofz_info, check_repeat=False)
                             ## save as binary file
-                            np.save(out_dir + out_fmt.format(cosmo_label, ihod, iseed, "boss_north_2dflens_south"), galcone_output)
+                            np.save(out_dir + out_fmt.format(cosmo_label, rlz_label, ihod, iseed, survey_specify), galcone_output)
 
                     logger.info('Loops end')
 
