@@ -48,15 +48,13 @@ class Dsigma_Runner(object):
             tb[col] = tb[col].astype(target_dtype)
         return tb
     
-    def __get_min_max(self, catname, keys):
+    def __get_min_max(self, cat:np.ndarray, keys:str):
         results = []
-        if catname == "lens":
-            cat = self.lens_cat
-        elif catname == "src":
-            cat = self.srcs_cat
-        
         for key in keys:
-            results += [cat[key].min(), cat[key].max()]
+            try:
+                results += [cat[key].min(), cat[key].max()]
+            except:
+                raise ValueError("Column {} does not exist".format(key))
         
         return tuple(results)
     
@@ -99,7 +97,7 @@ class Dsigma_Runner(object):
 
         return None
     
-    def mk_srcs_cat(self, srcs_filename, flip_g1=False, flip_g2=False, wSN=True, logger=None):
+    def mk_srcs_cat(self, srcs_filename, flip_g1=False, flip_g2=False, wphz=False, wSN=True, logger=None):
         if not isinstance(srcs_filename, list):
             srcs_filename = [srcs_filename]
         
@@ -120,6 +118,11 @@ class Dsigma_Runner(object):
         else:
             self.srcs_cat.rename_columns(['g1_pure', 'g2_pure'], ['e_1', 'e_2'])
 
+        if not wphz:
+            logger.info("Use true z")
+            self.srcs_cat.remove_column('z')
+            self.srcs_cat.rename_column('z_true', 'z')
+
         if flip_g1:
             self.srcs_cat['e_1'] = -self.srcs_cat['e_1']
         if flip_g2:
@@ -131,7 +134,7 @@ class Dsigma_Runner(object):
 
         return None
     
-    def mk_lens_cat(self, lens_filename, cut:dict={'Rv': [18,25]}, logger=None):
+    def mk_lens_cat(self, lens_filename, cut:dict={'Rv': [18,25]}, wrsd=False, logger=None):
         if logger is not None:
             logger.info("Load lens catalog from {}".format(lens_filename))
         lens_cat = np.load(lens_filename)
@@ -140,6 +143,10 @@ class Dsigma_Runner(object):
         self.lens_cat = Table(lens_cat)
         self.lens_cat = self.__convert_table_dtype(self.lens_cat, np.double)
         self.lens_cat.rename_column('w', 'w_sys')
+        ### only galaxy catalogs have 'z' and 'zrsd'
+        if wrsd and "zrsd" in self.lens_cat.colnames:
+            self.lens_cat.remove_column('z')
+            self.lens_cat.rename_column('zrsd', 'z')
 
         self.FLAG_LEN = True
 
@@ -147,16 +154,11 @@ class Dsigma_Runner(object):
     
     def mk_rand_cat(self, logger=None):
         if not self.FLAG_RAN:
-            zmin, zmax, Rvmin, Rvmax = self.__get_min_max("lens", ['z', 'Rv'])
-            z_rv_bounds = [(zmin, zmax), (Rvmin, Rvmax)]
-            if logger is not None:
-                logger.info("Build KDE of p(z,Rv)")
-            zRv_KDE = bounded_kde_transform(np.c_[self.lens_cat['z'], self.lens_cat['Rv']], z_rv_bounds)
-            ran_cat = self.ran_radec.copy()
-            if logger is not None:
-                logger.info("Resampling (z,Rv)")
-            ran_cat['z'], ran_cat['Rv'] = resample_bounded(zRv_KDE, len(ran_cat), z_rv_bounds)
-            self.ran_cat = Table(ran_cat)
+            north_cut = (self.lens_cat['survey'] != 3)
+            ran_cat_north = self.__mk_rand_cat_intermidiate(self.lens_cat[north_cut], logger)
+            ran_cat_south = self.__mk_rand_cat_intermidiate(self.lens_cat[np.logical_not(north_cut)], logger)
+            self.ran_cat = np.concatenate([ran_cat_north, ran_cat_south])
+            self.ran_cat = Table(self.ran_cat)
             self.ran_cat = self.__convert_table_dtype(self.ran_cat, np.double)
             self.ran_cat.rename_column('w', 'w_sys')
 
@@ -164,6 +166,19 @@ class Dsigma_Runner(object):
 
         return None
     
+    def __mk_rand_cat_intermidiate(self, catalog:np.ndarray, logger):
+        zmin, zmax, Rvmin, Rvmax = self.__get_min_max(catalog, ['z', 'Rv'])
+        z_rv_bounds = [(zmin, zmax), (Rvmin, Rvmax)]
+        if logger is not None:
+            logger.info("Build KDE of p(z,Rv)")
+        zRv_KDE = bounded_kde_transform(np.c_[catalog['z'], catalog['Rv']], z_rv_bounds)
+        ran_cat = self.ran_radec.copy()
+        if logger is not None:
+            logger.info("Resampling (z,Rv)")
+        ran_cat['z'], ran_cat['Rv'] = resample_bounded(zRv_KDE, len(ran_cat), z_rv_bounds)
+
+        return ran_cat
+
     def make_srcs_catalog(self, cosmo_label, tomo_label, flip_g1=False, flip_g2=False, wSN=False, logger=None):
         srcs_filename = self.srcs_file_fmt.format(cosmo_label, tomo_label+1)
         self.mk_srcs_cat(srcs_filename, flip_g1=flip_g1, flip_g2=flip_g2, wSN=wSN, logger=logger)
@@ -185,39 +200,67 @@ class Dsigma_Runner(object):
         
         self.FLAG_MATCH = True
 
+        if logger is not None:
+            logger.info(f"Original Lens: {(self.lens_cat['survey'] != 3).sum()} + {(self.lens_cat['survey'] == 3).sum()}")
+            logger.info(f"Matched Lens: {(self.lens_cat_matched['survey'] != 3).sum()} + {(self.lens_cat_matched['survey'] == 3).sum()}")
+            if self.FLAG_RAN:
+                logger.info(f"Original Rand: {len(self.ran_cat)}")
+                logger.info(f"Matched Rand: {len(self.ran_cat_matched)}")
+
         return None
     
     def check_catalog(self, odir="./"):
-        # fig = plt.figure(figsize=(13,13))
-        # ax = fig.add_subplot(projection="mollweide")
-        # ax.set_title('CMASSLOWZTOT')
-        # ax.scatter(np.deg2rad(180-self.srcs_cat["ra"]), np.deg2rad(self.srcs_cat["dec"]), s=0.01, alpha=0.1, marker='.')
-        # ax.scatter(np.deg2rad(180-self.lens_cat_matched["ra"]), np.deg2rad(self.lens_cat_matched["dec"]), s=0.01, alpha=1, marker='.')
-        # ax.grid()
-        # fig.savefig(odir + "check_lens_catalog.png", dpi=300)
+        fig = plt.figure(figsize=(13,13))
+        ax = fig.add_subplot(projection="mollweide")
+        ax.set_title('MOCK')
+        ax.scatter(np.deg2rad(180-self.srcs_cat["ra"]), np.deg2rad(self.srcs_cat["dec"]), s=0.01, alpha=0.1, marker='.')
+        ax.scatter(np.deg2rad(180-self.lens_cat_matched["ra"]), np.deg2rad(self.lens_cat_matched["dec"]), s=0.01, alpha=1, marker='.')
+        ax.grid()
+        fig.savefig(odir + "check_lens_catalog.png", dpi=300)
 
-        # fig = plt.figure(figsize=(13,13))
-        # ax = fig.add_subplot(projection="mollweide")
-        # ax.set_title('CMASSLOWZTOT')
-        # ax.scatter(np.deg2rad(180-self.srcs_cat["ra"]), np.deg2rad(self.srcs_cat["dec"]), s=0.01, alpha=0.1, marker='.')
-        # ax.scatter(np.deg2rad(180-self.ran_cat_matched["ra"]), np.deg2rad(self.ran_cat_matched["dec"]), s=0.01, alpha=1, marker='.')
-        # ax.grid()
-        # fig.savefig(odir + "check_rand_catalog.png", dpi=300)
+        fig = plt.figure(figsize=(13,13))
+        ax = fig.add_subplot(projection="mollweide")
+        ax.set_title('RANDOM')
+        ax.scatter(np.deg2rad(180-self.srcs_cat["ra"]), np.deg2rad(self.srcs_cat["dec"]), s=0.01, alpha=0.1, marker='.')
+        ax.scatter(np.deg2rad(180-self.ran_cat_matched["ra"]), np.deg2rad(self.ran_cat_matched["dec"]), s=0.01, alpha=1, marker='.')
+        ax.grid()
+        fig.savefig(odir + "check_rand_catalog.png", dpi=300)
 
-        fig = plt.figure()
-        ax = fig.add_subplot(111)
-        ax.hist(self.lens_cat_matched['Rv'], bins=50, histtype='step', lw=2, label='lens', density=True)
-        ax.hist(self.ran_cat_matched['Rv'], bins=50, histtype='step', lw=2, label='rand', density=True)
-        ax.legend()
-        fig.savefig(odir + "check_Rv.png", dpi=300)
+        # fig = plt.figure()
+        # ax = fig.add_subplot(111)
+        # ax.hist(self.lens_cat_matched['Rv'], bins=50, histtype='step', lw=2, label='lens', density=True)
+        # ax.hist(self.ran_cat_matched['Rv'], bins=50, histtype='step', lw=2, label='rand', density=True)
+        # ax.legend()
+        # fig.savefig(odir + "check_Rv.png", dpi=300)
 
-        fig = plt.figure()
-        ax = fig.add_subplot(111)
-        ax.hist(self.lens_cat_matched['z'], bins=50, histtype='step', lw=2, label='lens', density=True)
-        ax.hist(self.ran_cat_matched['z'], bins=50, histtype='step', lw=2, label='rand', density=True)
-        ax.legend()
-        fig.savefig(odir + "check_z.png", dpi=300)
+        # fig = plt.figure()
+        # ax = fig.add_subplot(111)
+        # ax.hist(self.lens_cat_matched['z'], bins=50, histtype='step', lw=2, label='lens', density=True)
+        # ax.hist(self.ran_cat_matched['z'], bins=50, histtype='step', lw=2, label='rand', density=True)
+        # ax.legend()
+        # fig.savefig(odir + "check_z.png", dpi=300)
 
+
+    def __stack_signals(self, lens_catalog, njk, esd_kwargs):
+        esd = excess_surface_density(lens_catalog,
+                                    return_table=True,
+                                    **esd_kwargs
+                                    )
+        if njk > 2:    
+            if logger is not None:
+                logger.info("Estimating jackknife errors")
+
+            esd_cov = jackknife_resampling(
+                    excess_surface_density, 
+                    lens_catalog,
+                    return_table=False, 
+                    **esd_kwargs)
+        
+            esd['ds_err'] = np.sqrt(np.diag(esd_cov))
+
+            return esd, esd_cov
+        else:
+            return esd
     
     def run(self, njk=1, n_jobs=32, logger=None):
         if not self.FLAG_COSMO:
@@ -233,13 +276,8 @@ class Dsigma_Runner(object):
             self.lens_cat_matched = self.lens_cat
             if self.FLAG_RAN:
                 self.ran_cat_matched = self.ran_cat
-        
-        if logger is not None:
-            logger.info(f"Lens: {len(self.lens_cat_matched)}")
-            if self.FLAG_RAN:
-                logger.info(f"Rand: {len(self.ran_cat_matched)}")
-            logger.info("Precomputing lens-source pairs")
 
+        logger.info("Precomputing lens-source pairs")
         precompute(self.lens_cat_matched, self.srcs_cat, self.rp_edges_mpc, cosmology=self.cosmology,
                             comoving=True, lens_source_cut=self.lens_source_cut,
                             progress_bar=True, n_jobs=n_jobs)
@@ -270,6 +308,30 @@ class Dsigma_Runner(object):
         if logger is not None:
             logger.info("Stacking lensing signals")
 
+        north_slt = (self.lens_cat_matched['survey'] != 3)
+        north_rslt = (self.ran_cat_matched['survey'] != 3)
+
+        #### stack north        
+        if self.FLAG_RAN:
+            kwargs = {
+                'table_r': self.ran_cat_matched[north_rslt],
+                'random_subtraction': True
+            }
+        else:
+            kwargs = {}
+        esd_n, esd_cov_n = self.__stack_signals(self.lens_cat_matched[north_slt], njk, kwargs)
+
+        #### stack south        
+        if self.FLAG_RAN:
+            kwargs = {
+                'table_r': self.ran_cat_matched[np.logical_not(north_rslt)],
+                'random_subtraction': True
+            }
+        else:
+            kwargs = {}
+        esd_s, esd_cov_s = self.__stack_signals(self.lens_cat_matched[np.logical_not(north_slt)], njk, kwargs)
+
+        #### combine        
         if self.FLAG_RAN:
             kwargs = {
                 'table_r': self.ran_cat_matched,
@@ -277,26 +339,9 @@ class Dsigma_Runner(object):
             }
         else:
             kwargs = {}
-        esd = excess_surface_density(self.lens_cat_matched,
-                                    return_table=True,
-                                    **kwargs
-                                    )
-        if njk > 2:    
-            if logger is not None:
-                logger.info("Estimating jackknife errors")
-
-            esd_cov = jackknife_resampling(
-                    excess_surface_density, 
-                    self.lens_cat_matched,
-                    return_table=False, 
-                    **kwargs)
+        esd, esd_cov = self.__stack_signals(self.lens_cat_matched, njk, kwargs)
         
-            esd['ds_err'] = np.sqrt(np.diag(esd_cov))
-        
-            return esd, esd_cov
-        
-        else:
-            return esd
+        return esd_n, esd_cov_n, esd_s, esd_cov_s, esd, esd_cov
 
 def cal_bin_interval(start, end, num, bintype='lin'):
     if bintype == 'lin':
@@ -390,20 +435,28 @@ if __name__ == "__main__":
 
     ### directly set lens/srcs filenames
     cosmo_label = 1
-    survey_name = "lowz"
-
-    lens_cat_fname = f"/data2/suchen/CosmoGrid/high_ngal_suits/Void_{survey_name}/cosmo_{cosmo_label:06d}_run_0_HOD_0_run_0_boss_north_2dflens_south.npy"
+    survey_name = "cmass"
+    wrsd = False
+    if wrsd:
+        lens_cat_fname = f"/data2/suchen/CosmoGrid/high_ngal_suits_wrsd/Void_{survey_name}_wrsd/cosmo_{cosmo_label:06d}_run_0_HOD_0_run_0_boss_north_2dflens_south.npy"
+    else:
+        lens_cat_fname = f"/data2/suchen/CosmoGrid/high_ngal_suits_wrsd/Void_{survey_name}/cosmo_{cosmo_label:06d}_run_0_HOD_0_run_0_boss_north_2dflens_south.npy"
 
     #### srcs fname can be single string
     # src_tomo_label = 4
     # srcs_cat_fname = f"/data2/suchen/CosmoGrid/Shape/KiDS_ngal_suits/cosmo_{cosmo_label:06d}_run_0_kids_north_tomo{src_tomo_label}.npy"
     #### or a list
-    src_tomo_label = [4,5]
-    srcs_cat_fbase = f"/data2/suchen/CosmoGrid/Shape/KiDS_ngal_suits/cosmo_{cosmo_label:06d}" + "_run_0_kids_north_tomo{:d}.npy"
+    src_tomo_label = [4]
+    ##### KiDS north
+    srcs_cat_fbase = f"/data2/suchen/CosmoGrid/Shape/KiDS_ngal_suits_wphzerr/cosmo_{cosmo_label:06d}" + "_run_0_kids_north_tomo{:d}.npy"
     srcs_cat_fname = [srcs_cat_fbase.format(itomo) for itomo in src_tomo_label]
+    ##### KiDS south
+    srcs_cat_fbase = f"/data2/suchen/CosmoGrid/Shape/KiDS_ngal_suits_wphzerr/cosmo_{cosmo_label:06d}" + "_run_0_kids_south_tomo{:d}.npy"
+    srcs_cat_fname += [srcs_cat_fbase.format(itomo) for itomo in src_tomo_label]
 
-    wSN = True
-    rand_radec_fname = f"/data2/suchen/CosmoGrid/Rand/boss_{survey_name}_north_radec.npy"
+    wSN = False
+    wphz = False
+    rand_radec_fname = f"/data2/suchen/CosmoGrid/Rand/boss{survey_name}_north_2dflens_south_radec.npy"
 
     # ### or filename formats, used in batch runs
     # vnamebase = "/data2/suchen/CosmoGrid/fix_HOD_suits/old/Void/cosmo_{:06d}_run_0_HOD_{:d}_run_0_boss_north.npy"
@@ -415,14 +468,20 @@ if __name__ == "__main__":
 
 
     ''' ---- output file name ---- '''
-    ofilebase = f"aux/results/vlens/cosmo_{cosmo_label:06d}_{survey_name}_kids_"
+    ofilebase = f"aux/results/vlens/cosmo_{cosmo_label:06d}_{survey_name}_2dflens_kids_"
     tomobase = "_".join([f"tomo{itomo}" for itomo in src_tomo_label])
     ftypebase = ".fits"
 
+    ofilename = ofilebase + tomobase
+
+    if wrsd:
+        ofilename += "_wrsd"
     if wSN:
-        ofilename = ofilebase + tomobase + "_wSN" + ftypebase
-    else:
-        ofilename = ofilebase + tomobase + ftypebase
+        ofilename += "_wSN"
+    if wphz:
+        ofilename += "_wphzerr"
+    
+    ofilename += ftypebase
 
 
     ''' ----------- Main routines ------------ '''
@@ -451,17 +510,23 @@ if __name__ == "__main__":
 
     # runner.make_srcs_catalog(cosmo_label, tomo_label, flip_g1=True, logger=logger)
     # runner.make_lens_catalog(cosmo_label, hod_label, cut={'Rv': [rvmin, rvmax]}, logger=logger)
-    runner.mk_srcs_cat(srcs_cat_fname, flip_g1=True, wSN=wSN, logger=logger)
-    runner.mk_lens_cat(lens_cat_fname, cut={'Rv': [rvmin, rvmax]}, logger=logger)
+    runner.mk_srcs_cat(srcs_cat_fname, flip_g1=True, wSN=wSN, wphz=wphz, logger=logger)
+    runner.mk_lens_cat(lens_cat_fname, cut={'Rv': [rvmin, rvmax]}, wrsd=wrsd, logger=logger)
     runner.mk_rand_cat(logger=logger)
     runner.match_back_fore_catalogs(nside_x=500, nside_y=300, logger=logger)
 
     # runner.check_catalog()
     logger.info("Run")
 
-    esd, esd_cov = runner.run(njk=100, n_jobs=n_jobs, logger=logger)
+    esdn, esdn_cov, esds, esds_cov, esd, esd_cov = runner.run(njk=100, n_jobs=n_jobs, logger=logger)
 
     logger.info(f"Save to file {ofilename}")
+
+    esdn.write(ofilename.replace('.fits', '_oN.fits'), overwrite=True)
+    np.save(ofilename.replace('.fits', '_oN.cov.npy'), esdn_cov)
+
+    esds.write(ofilename.replace('.fits', '_oS.fits'), overwrite=True)
+    np.save(ofilename.replace('.fits', '_oS.cov.npy'), esds_cov)
 
     esd.write(ofilename, overwrite=True)
     np.save(ofilename.replace('.fits', '.cov.npy'), esd_cov)
