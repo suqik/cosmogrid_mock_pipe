@@ -102,6 +102,9 @@ nz_2dflens_fname = nz_fbase + "nbar_2dFLens_south_data.dat"
 
 out_dir = f"/data2/suchen/CosmoGrid/high_ngal_suits_wrsd/HOD_{zbin_name}/"
 out_fmt = "cosmo_{:06d}_run_{:d}_HOD_{:d}_run_{:d}_{:s}.npy"
+if not os.path.isdir(out_dir):
+    os.mkdir(out_dir)
+
 hod_param_out = f"{wdir}/cfgs/hod/hod_5params_dict_high_ngal_wcosmo2.json"
 
 ''' 5. HOD setup '''
@@ -194,7 +197,7 @@ if ROT:
 
 
 ''' main routines '''
-def load_halocat(cpar_fname, halo_fname, ofmt='hod'):
+def load_halocat(cpar_fname, halo_fname, ofmt='hod', clean=True):
     # cpar_file = sim_fmt.format(cosmo_label, rlz_label) + "params.yml"
 
     logger.info(f"Load cosmology from file {cpar_fname}")
@@ -205,7 +208,15 @@ def load_halocat(cpar_fname, halo_fname, ofmt='hod'):
     
     logger.info(f"Load PKD halo from file {halo_fname}")
     
-    pkd_halo_infos = get_pkd_halo_attrs(halo_fname, attrs=["pos","vel","mass"], Lbox=Lbox, redshift=redshift)
+    pkd_halo_infos = get_pkd_halo_attrs(halo_fname, attrs=["pos","vel","mass","rHalf"], Lbox=Lbox, redshift=redshift)
+
+    if clean:
+        phys_cut = (
+            pkd_halo_infos['rHalf'] > 0.1
+        )
+
+        for iattr in pkd_halo_infos.keys():
+            pkd_halo_infos[iattr] = pkd_halo_infos[iattr][phys_cut]
 
     if ofmt == 'pkd':
         return pkd_halo_infos
