@@ -79,9 +79,7 @@ bgal_type = np.dtype(
 )
 
 ### matched foreground catalog
-### Note for input of SWOT, the last line
-### should be `sigma_z` rather than `weight`
-### survey label: 0 for CMASSLOWZ, 1 for LOWZE2, 2 for LOWZE3, 3 for 2dFLenS
+### survey label: 0 for LOWZ, 1 for LOWZE2, 2 for LOWZE3, 3 for 2dFLenS, 4 for CMASS
 fgal_type = np.dtype(
     [
         ("ra", "f4"), 
@@ -272,6 +270,11 @@ def get_pkd_halo_attrs(fname:str, attrs:Union[str,list]=["pos", "mass"], Lbox:fl
                 outputs["vel"] = vel
             else:
                 raise ValueError("Calculate position needs boxsize and redshift as input!")
+        elif iattr == "rHalf":
+            if Lbox is not None:
+                outputs["rHalf"] = halo["rHalf"]*Lbox
+            else:
+                raise ValueError("Calculate rHalf needs boxsize as input!")
         elif iattr in halo.dtype.fields.keys():
             # outputs.append(halo[iattr])
             outputs[iattr] = halo[iattr]
@@ -316,6 +319,7 @@ def pkd_to_hod_type(pkd_infos:dict, cosmo:ccl.Cosmology, pmass:float, boxsize:fl
     halo_pos = pkd_infos["pos"]
     halo_vel = pkd_infos["vel"]
     halo_mass = pkd_infos["mass"]
+    halo_rhalf = pkd_infos["rHalf"]
 
     halo_radii = mdef.get_radius(cosmo, halo_mass/hubble, scale_fac)*hubble # Mpc/h, physical radius
     halo_concs = conc_model(cosmo, halo_mass/hubble, scale_fac) # concentration, Duffy08
@@ -336,6 +340,7 @@ def pkd_to_hod_type(pkd_infos:dict, cosmo:ccl.Cosmology, pmass:float, boxsize:fl
         halo_rvir=halo_radii,
         halo_mvir=halo_mass,
         halo_nfw_conc=halo_concs,  ### concentration of NFW
+        halo_rhalf=halo_rhalf, ### half mass radius in Mpc/h
         halo_hostid=np.arange(num_halo)
     )
 
