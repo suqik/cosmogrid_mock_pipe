@@ -15,41 +15,45 @@ cosmo = ccl.Cosmology(
 
 south_area = 533.476 # deg^2
 
-# logger.info("Load data")
+CATTYPE = "data"
 
-# lowz_2dflens = Table.read("/data2/suchen/2dFLenS/data_2dfloz_kidss/data_loz_atlas_kidss_160105_ntar.dat", 
-#                           format='ascii',
-#                           header_start=0, data_start=1)
+if CATTYPE == "data":
+    logger.info("Load data")
 
-# higz_2dflens = Table.read("/data2/suchen/2dFLenS/data_2dfhiz_kidss/data_hiz_atlas_kidss_160105_ntar.dat",
-#                           format='ascii',
-#                           header_start=0, data_start=1)
+    lowz_2dflens = Table.read("/data2/suchen/2dFLenS/data_2dfloz_kidss/data_loz_atlas_kidss_160105_ntar.dat", 
+                            format='ascii',
+                            header_start=0, data_start=1)
 
-logger.info("Load random")
+    higz_2dflens = Table.read("/data2/suchen/2dFLenS/data_2dfhiz_kidss/data_hiz_atlas_kidss_160105_ntar.dat",
+                            format='ascii',
+                            header_start=0, data_start=1)
 
-tmp_list = []
-for i in trange(1,41):
-    tmp = Table.read(f"/data2/suchen/2dFLenS/data_2dfloz_kidss/rand{i:03d}_loz_atlas_kidss_160105_ntar.dat", 
-                    format='ascii',
-                    header_start=0, data_start=1)
-    tmp_list.append(tmp)
+if CATTYPE == "random":
+    logger.info("Load random")
 
-lowz_2dflens = vstack(tmp_list)
+    tmp_list = []
+    for i in trange(1,41):
+        tmp = Table.read(f"/data2/suchen/2dFLenS/data_2dfloz_kidss/rand{i:03d}_loz_atlas_kidss_160105_ntar.dat", 
+                        format='ascii',
+                        header_start=0, data_start=1)
+        tmp_list.append(tmp)
 
-tmp_list = []
-for i in trange(1,41):
-    tmp = Table.read(f"/data2/suchen/2dFLenS/data_2dfhiz_kidss/rand{i:03d}_hiz_atlas_kidss_160105_ntar.dat", 
-                    format='ascii',
-                    header_start=0, data_start=1)
-    tmp_list.append(tmp)
+    lowz_2dflens = vstack(tmp_list)
 
-higz_2dflens = vstack(tmp_list)
+    tmp_list = []
+    for i in trange(1,41):
+        tmp = Table.read(f"/data2/suchen/2dFLenS/data_2dfhiz_kidss/rand{i:03d}_hiz_atlas_kidss_160105_ntar.dat", 
+                        format='ascii',
+                        header_start=0, data_start=1)
+        tmp_list.append(tmp)
+
+    higz_2dflens = vstack(tmp_list)
 
 total_2dflens = vstack([lowz_2dflens, higz_2dflens])
-select = total_2dflens['type'] != 2
+select = total_2dflens['type'] != 3
 total_2dflens = total_2dflens[select]
 
-logger.info("Total number of galaxies: %d", len(total_2dflens))
+logger.info("Total number of galaxies: {:d}".format(len(total_2dflens)))
 
 logger.info("Binning data")
 
@@ -65,7 +69,7 @@ nbar = Nz / volume
 
 logger.info("Save n(z)")
 
-with open("catalogs/NOfZ/nbar_2dFLens_south_random.dat", "w+") as f:
+with open("catalogs/NOfZ/lens/nbar_2dFLens_south_{}.dat".format(CATTYPE), "w+") as f:
     f.write(f"# effective area (deg^2), effective volume (Mpc/h)^3: {south_area:.6e} {volume.sum():.6e}\n")
     f.write("# zcen,zlow,zhigh,nbar,shell_vol,total gals\n")
     np.savetxt(f, np.c_[zctrs, zedges[:-1], zedges[1:], nbar, volume, Nz], 
