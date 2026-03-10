@@ -17,33 +17,24 @@ from utils.mkback_utils import rotate_pix
 RSD = True
 logger.info(f"RSD: {RSD}")
 
-USE_FID = True
+cosmo_ccl_fid = ccl.Cosmology(
+    Omega_c=0.26, 
+    Omega_b=0.049, 
+    h=0.6774, 
+    sigma8=0.816, 
+    n_s=0.9667
+)
 
-if USE_FID:
-    cosmo_ccl_fid = ccl.Cosmology(
-        Omega_c=0.26, 
-        Omega_b=0.049, 
-        h=0.6774, 
-        sigma8=0.816, 
-        n_s=0.9667
-    )
-    logger.info(f"Use fiducial cosmology")
-    logger.info(f"Cosmology parameters:")
-    logger.info(f"h = {cosmo_ccl_fid["h"]:.4f}")
-    logger.info(f"Omega_c = {cosmo_ccl_fid["Omega_c"]:.3f}")
-    logger.info(f"Omega_b = {cosmo_ccl_fid["Omega_b"]:.3f}")
-    logger.info(f"n_s = {cosmo_ccl_fid["n_s"]:.4f}")
-    logger.info(f"sigma8 = {cosmo_ccl_fid["sigma8"]:.3f}")
-
-else:
-    logger.info("Use true cosmology")
+USE_FID = False
 
 wdir = "/home/suchen/Program/CosmoGrid"
 
 ''' cosmology, HOD and galaxy catalog info '''
+
 sim_fmt = "/data3/suchen/CosmoGridV1/grid/cosmo_{:06d}/run_0/"
 hod_param_fname = f"{wdir}/cfgs/hod/hod_5params_dict_high_ngal_wcosmo2.json"
-survey_name = "cmass"
+
+survey_name = "lowz"
 
 if survey_name == "lowz":
     zmin = 0.2
@@ -52,16 +43,24 @@ if survey_name == "cmass":
     zmin = 0.4
     zmax = 0.6
 
-cat_dirbase = "high_ngal_suits"
-if RSD:
-    cat_dirbase += "_wrsd"
+cat_dirbase  = "high_ngal_suits_wrsd"
+cat_fmt = "cosmo_{:06d}_run_0_HOD_{}_run_0_boss_north_2dflens_south.npy"
 
-gfmt = f"/data2/suchen/CosmoGrid/{cat_dirbase}/HOD_{survey_name}/" + "cosmo_{:06d}_run_0_HOD_{}_run_0_boss_north_2dflens_south.npy"
+gal_dirbase  = f"HOD_{survey_name}"
+gfmt = f"/data2/suchen/CosmoGrid/{cat_dirbase}/HOD_{survey_name}/{cat_fmt}"
+
 ''' output info '''
+
+void_dirbase = f"Void_{survey_name}"
+if RSD:
+    void_dirbase += "_wrsd"
 if USE_FID:
-    vfmt = f"/data2/suchen/CosmoGrid/{cat_dirbase}/Void_{survey_name}_fidcosmo/" + "cosmo_{:06d}_run_0_HOD_{}_run_0_boss_north_2dflens_south.npy"
-else:
-    vfmt = f"/data2/suchen/CosmoGrid/{cat_dirbase}/Void_{survey_name}/" + "cosmo_{:06d}_run_0_HOD_{}_run_0_boss_north_2dflens_south.npy"
+    void_dirbase += "fidcosmo"
+
+vfmt = f"/data2/suchen/CosmoGrid/{cat_dirbase}/{void_dirbase}/{cat_fmt}"
+
+if not os.path.isdir(os.path.dirname(vfmt)):
+    os.mkdir(os.path.dirname(vfmt))
 
 ''' mask file info'''
 
@@ -193,12 +192,12 @@ def find_voids_with_boundary_effect(galcone:np.ndarray,
     ### find voids, and transform to Spherical coordinates
     logger.info("Find voids")
     tmp_void_list = []
-    survey_name = ["LOWZ", "LOWZE2", "LOWZE3", "2dFLens", "CMASS"]
+    survey_part_name = ["LOWZ", "LOWZE2", "LOWZE3", "2dFLenS", "CMASS"]
 
     for survey_lb in [0,1,2,4,3]:
-        logger.info(f"Survey {survey_name[survey_lb]}")
-        select = galcone['survey'] == survey_lb
+        select = (galcone['survey'] == survey_lb)
         if np.sum(select) > 0:
+            logger.info(f"Survey {survey_part_name[survey_lb]}")
             tmp_void_lcone = gal2void(gal_pos_cart[select], cosmo_ccl, survey_lb, rank)
             tmp_void_list.append(tmp_void_lcone)
 
@@ -222,39 +221,39 @@ def find_voids_with_boundary_effect(galcone:np.ndarray,
     tmp_void_list = []
 
     ## LOWZ
-    logger.info("LOWZ")
     select = void_lcone['survey'] == 0
     if np.sum(select) > 0:
+        logger.info("LOWZ")
         boss_lowzcmass_void, _ = apply_boss_geometry(void_lcone[select], geoms['lowzcmass'], masks, galcone_ids=None)
         tmp_void_list.append(boss_lowzcmass_void)
 
     ## LOWZE2
-    logger.info("LOWZE2")
     select = void_lcone['survey'] == 1
     if np.sum(select) > 0:
+        logger.info("LOWZE2")
         boss_lowze2_void, _ = apply_boss_geometry(void_lcone[select], geoms['lowze2'], masks, galcone_ids=None)
         boss_lowze2_void, _ = apply_boss_lowze2e3_trim(boss_lowze2_void, geoms['lowz'], galcone_ids=None)
         tmp_void_list.append(boss_lowze2_void)
 
     ## LOWZE3
-    logger.info("LOWZE3")
     select = void_lcone['survey'] == 2
     if np.sum(select) > 0:
+        logger.info("LOWZE3")
         boss_lowze3_void, _ = apply_boss_geometry(void_lcone[select], geoms['lowze3'], masks, galcone_ids=None)
         boss_lowze3_void, _ = apply_boss_lowze2e3_trim(boss_lowze3_void, geoms['lowz'], galcone_ids=None)
         tmp_void_list.append(boss_lowze3_void)
 
     ## CMASS
-    logger.info("CMASS")
     select = void_lcone['survey'] == 4
     if np.sum(select) > 0:
+        logger.info("CMASS")
         boss_lowzcmass_void, _ = apply_boss_geometry(void_lcone[select], geoms['cmass'], masks, galcone_ids=None)
         tmp_void_list.append(boss_lowzcmass_void)
 
-    ## 2dFLens
-    logger.info("2dFLens")
+    ## 2dFLenS
     select = void_lcone['survey'] == 3
     if np.sum(select) > 0:
+        logger.info("2dFLenS")
         t2dflens_void, _ = apply_2dflens_geometry(void_lcone[select], geoms['2dflens'], galcone_ids=None)
         tmp_void_list.append(t2dflens_void)
 
@@ -296,7 +295,7 @@ def load_boss_data(fname, zmin, zmax, survey_lb):
     return boss_data
 
 def load_2dflens_data(fname, zmin, zmax, survey_lb=3, use_eboss=False):
-    t2dflens_data_tb = np.loadtxt(fname, usecols=(0,1,2,6,8))
+    t2dflens_data_tb = np.loadtxt(fname, usecols=(0,1,2,6,8), skiprows=1)
 
     if not use_eboss:
         boss_slt = (t2dflens_data_tb[:,-1] != 3)
@@ -330,6 +329,17 @@ if __name__ == "__main__":
             MOCK = False
         if sys.argv[-1] == "test":
             TEST = True
+
+    if (not MOCK) or (MOCK and USE_FID):
+        logger.info(f"Use fiducial cosmology")
+        logger.info(f"Cosmology parameters:")
+        logger.info(f"h = {cosmo_ccl_fid["h"]:.4f}")
+        logger.info(f"Omega_c = {cosmo_ccl_fid["Omega_c"]:.3f}")
+        logger.info(f"Omega_b = {cosmo_ccl_fid["Omega_b"]:.3f}")
+        logger.info(f"n_s = {cosmo_ccl_fid["n_s"]:.4f}")
+        logger.info(f"sigma8 = {cosmo_ccl_fid["sigma8"]:.3f}")
+    else:
+        logger.info("Use true cosmology")
 
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
@@ -457,7 +467,7 @@ if __name__ == "__main__":
             #### For real data do not need to consider RSD
             voidlcone = find_voids_with_boundary_effect(galcone, geoms, masks, cosmo_ccl, zmin, zmax, rank=1234, wrsd=False)
             #### save to file
-            vfile = "catalogs/bossdata_lowz_2dflens_void.npy"
+            vfile = "catalogs/bosslowz_2dflens_data_void.npy"
             np.save(vfile, voidlcone)
 
         if survey_name == "cmass":
@@ -479,5 +489,5 @@ if __name__ == "__main__":
             #### find voids in lightcone
             voidlcone = find_voids_with_boundary_effect(galcone, geoms, masks, cosmo_ccl, zmin, zmax, rank=1234, wrsd=False)
             #### save to file
-            vfile = "catalogs/bossdata_cmass_2dflens_void.npy"
+            vfile = "catalogs/bosscmass_2dflens_data_void.npy"
             np.save(vfile, voidlcone)
