@@ -37,7 +37,8 @@ geom_boss_fname_list = [
     mask_boss_fdir + "mask_DR12v5_CMASSLOWZ_North.ply",
     mask_boss_fdir + "mask_DR12v5_LOWZE2_North.ply",
     mask_boss_fdir + "mask_DR12v5_LOWZE3_North.ply",
-    mask_boss_fdir + "mask_DR12v5_LOWZ_North.ply" # For trimming LOWZE2 and LOWZE3 regions
+    mask_boss_fdir + "mask_DR12v5_LOWZ_North.ply", # For trimming LOWZE2 and LOWZE3 regions
+    mask_boss_fdir + "mask_DR12v5_CMASS_North.ply"
 ]
 ### mask files corresponding to observational effects
 mask_boss_fname_list = [
@@ -58,7 +59,8 @@ nz_fbase = "catalogs/NOfZ/lens/"
 nz_boss_fname_list = [
     nz_fbase + "nbar_DR12v5_CMASSLOWZ_North_om0p31_Pfkp10000.dat",
     nz_fbase + "nbar_DR12v5_LOWZE2_North_om0p31_Pfkp10000.dat",
-    nz_fbase + "nbar_DR12v5_LOWZE3_North_om0p31_Pfkp10000.dat"
+    nz_fbase + "nbar_DR12v5_LOWZE3_North_om0p31_Pfkp10000.dat",
+    nz_fbase + "nbar_DR12v5_CMASS_North_om0p31_Pfkp10000.dat"
 ]
 
 nz_2dflens_fname = nz_fbase + "nbar_2dFLens_south_data.dat"
@@ -136,7 +138,7 @@ def load_boss_nz_files(nz_boss_fname_list):
     ### load nofz information
     nofz_info = {}
     ### boss lowzcmass
-    boss_part_names = ['boss_lowzcmass', 'boss_lowze2', 'boss_lowze3']
+    boss_part_names = ['boss_lowzcmass', 'boss_lowze2', 'boss_lowze3', 'boss_cmass']
     for ipart, nz_boss_fname in enumerate(nz_boss_fname_list):
         nofz = np.loadtxt(nz_boss_fname, usecols=(1,2,3,5)) # zmin, zmax, nz, shell_vol
         argstart = np.argwhere(nofz[:,0] == zmin)[0,0]
@@ -156,6 +158,14 @@ def apply_boss_lowze2e3_cut(galcone_output, geom_boss, masks_boss, masks_boss_lo
     return galcone_boss, galcone_id_boss
 
 def apply_boss_lowz_nz_dsample(galcone_boss, nofz_boss, galcone_id_boss=None):
+    galcone_boss, galcone_id_boss = apply_nz_downsample(galcone_boss, nofz_boss, galcone_ids=galcone_id_boss)
+    return galcone_boss, galcone_id_boss
+
+def apply_boss_cmass_cut(galcone_output, geom_boss, masks_boss, galcone_id=None):
+    galcone_boss, galcone_id_boss = apply_boss_geometry(galcone_output, geom_boss, masks_boss, galcone_ids=galcone_id)
+    return galcone_boss, galcone_id_boss
+
+def apply_boss_cmass_nz_dsample(galcone_boss, nofz_boss, galcone_id_boss=None):
     galcone_boss, galcone_id_boss = apply_nz_downsample(galcone_boss, nofz_boss, galcone_ids=galcone_id_boss)
     return galcone_boss, galcone_id_boss
 
@@ -184,7 +194,14 @@ def apply_boss_lowz_nz_dsample(galcone_boss, nofz_boss, galcone_id_boss=None):
 if __name__ == "__main__":
     ''' >>>==========   pre-defined routines   ============<<< '''
 
-    run_name_list = ['gen_boss_gal', 'find_void_wob', 'find_void_wb', 'find_boss_void']
+    run_name_list = [
+        'gen_boss_gal', 
+        'find_void_wob', 
+        'find_void_wb', 
+        'find_bosslowz_2dflens_void', 
+        'find_boss_cmass_2dflens_void'
+        ]
+    
     if len(sys.argv) > 1:
         run_name = sys.argv[1]
     else:
@@ -375,8 +392,8 @@ if __name__ == "__main__":
         np.save("aux/catalogs/boss_lowze3_void_wb.npy", boss_lowze3_void)
     #################################################################################################
 
-    ###############################  find void in BOSS LOWZ-E3 data   ###############################
-    if run_name == "find_boss_void":
+    ###############################  find void in BOSS LOWZ and 2dFLenS data   ###############################
+    if run_name == "find_bosslowz_2dflens_void":
         
         from astropy.table import Table
         def load_boss_data(fname, zmin, zmax):
@@ -391,15 +408,27 @@ if __name__ == "__main__":
             boss_data = boss_data[zcut]
 
             return boss_data
+        
+        def load_2dflens_data(fname, zmin, zmax):
+            t2dflens_data_tb = Table.read(fname, 
+                                    format='ascii',
+                                    header_start=0, data_start=1)
+            t2dflens_data = np.empty(len(t2dflens_data_tb), dtype=fgal_type)
+            t2dflens_data['ra'] = t2dflens_data_tb['RA']
+            t2dflens_data['dec'] = t2dflens_data_tb['Dec']
+            t2dflens_data['z'] = t2dflens_data_tb['redshift']
+            t2dflens_data['w'] = t2dflens_data_tb['wei']
+
+            zcut = (t2dflens_data['z'] > zmin) & (t2dflens_data['z'] < zmax)
+            t2dflens_data = t2dflens_data[zcut]
+
+            return t2dflens_data
 
         def find_void_from_lcone(halo_lcone, cosmo_ccl, survey:int=0):
             zmin = halo_lcone['z'].min()
             zmax = halo_lcone['z'].max()
             halo_lcone_cart = Sph2Cart(cosmo_ccl, ra=halo_lcone['ra'], dec=halo_lcone['dec'], z=halo_lcone['z'])
             void_pos, void_radius = find_void(halo_lcone_cart, boxsize=None)
-            # void_rcut = (void_radius > 15) & (void_radius < 25)
-            # void_pos = void_pos[void_rcut]
-            # void_radius = void_radius[void_rcut]
 
             v_ra, v_dec, v_z, phys_cut = Cart2Sph(cosmo_ccl, pos=void_pos)
             void_lcone = np.empty(len(v_ra), dtype=fvoid_type)
@@ -421,31 +450,135 @@ if __name__ == "__main__":
         ### load boss data
         zmin = 0.2
         zmax = 0.4
-        boss_lowzcmass_halo = load_boss_data("/data2/suchen/BOSS_dr12/galaxy_DR12v5_CMASSLOWZ_North.fits", zmin, zmax)
+        boss_lowzcmass_halo = load_boss_data("/data2/suchen/BOSS_dr12/SDSS_DR12_orig/galaxy_DR12v5_CMASSLOWZ_North.fits", zmin, zmax)
         boss_lowze2_halo = load_boss_data("/data2/suchen/BOSS_dr12/SDSS_DR12_orig/galaxy_DR12v5_LOWZE2_North_trimmed.fits", zmin, zmax)
         boss_lowze3_halo = load_boss_data("/data2/suchen/BOSS_dr12/SDSS_DR12_orig/galaxy_DR12v5_LOWZE3_North_trimmed.fits", zmin, zmax)
+        t2dflens_halo = load_2dflens_data("/data2/suchen/2dFLenS/binned_data/data_2dfbz1_kidss_160105_rat/data_bz1_atlas_kidss_160105_rat.dat", zmin, zmax)
 
         ### apply boss geometry
         ### apply boss_lowz, boss_lowe2, and boss_lowe3 separately, and save.
         ### since void finding algorithm is sensitive to galaxy number density
-        logger.info("Apply boss geometry.")
+        logger.info("Load boss geometry.")
         boss_geoms = load_boss_geom_files(geom_boss_fname_list, mask_boss_fname_list)
-
+        logger.info("Load 2dFLenS geometry.")
+        t2dflens_geom = loadFitsMaps(mask_weight_2df_fname)
+  
         ### find void in lightcone data
         logger.info("Find void in lightcone data.")
         boss_lowzcmass_void = find_void_from_lcone(boss_lowzcmass_halo, cosmo_ccl, survey=0)
         boss_lowze2_void = find_void_from_lcone(boss_lowze2_halo, cosmo_ccl, survey=1)
         boss_lowze3_void = find_void_from_lcone(boss_lowze3_halo, cosmo_ccl, survey=2)
+        t2dflens_void = find_void_from_lcone(t2dflens_halo, cosmo_ccl, survey=3)
         
+        logger.info("Apply geometry cut.")
         boss_lowzcmass_void, _ = apply_boss_lowz_cut(boss_lowzcmass_void, boss_geoms['boss_gemo'][0], boss_geoms['boss_masks'], galcone_id=None)
         boss_lowze2_void, _ = apply_boss_lowze2e3_cut(boss_lowze2_void, boss_geoms['boss_gemo'][1], boss_geoms['boss_masks'], boss_geoms['boss_gemo'][-1], galcone_id=None)
         boss_lowze3_void, _ = apply_boss_lowze2e3_cut(boss_lowze3_void, boss_geoms['boss_gemo'][2], boss_geoms['boss_masks'], boss_geoms['boss_gemo'][-1], galcone_id=None)
 
-        boss_lowzcmasstot_void = np.append(boss_lowzcmass_void, np.append(boss_lowze2_void, boss_lowze3_void))
+        t2dflens_void, _ = apply_2dflens_geometry(t2dflens_void, t2dflens_geom, galcone_ids=None)
 
-        del boss_lowzcmass_void, boss_lowze2_void, boss_lowze3_void
+        boss_lowzcmasstot_void = np.append(boss_lowzcmass_void, np.append(boss_lowze2_void, boss_lowze3_void))
+        boss_lowzcmasstot_2dflens_void = np.append(boss_lowzcmasstot_void, t2dflens_void)
+
+        del boss_lowzcmass_void, boss_lowze2_void, boss_lowze3_void, t2dflens_void
 
         ### save
         logger.info("Save to file.")
-        np.save("aux/catalogs/Data/bossdata_lowzcmasstot_void.npy", boss_lowzcmasstot_void)
+        np.save("aux/catalogs/Data/bossdata_lowzcmasstot_2dflensdata_void.npy", boss_lowzcmasstot_2dflens_void)
+        # np.save("aux/catalogs/Data/bossdata_lowzcmasstot_void.npy", boss_lowzcmasstot_void)
+    #################################################################################################
+
+    ###############################  find void in BOSS CMASS and 2dFLenS data   ###############################
+    if run_name == "find_boss_cmass_2dflens_void":
+        
+        from astropy.table import Table
+        def load_boss_data(fname, zmin, zmax):
+            boss_data_tb = Table.read(fname)
+            boss_data = np.empty(len(boss_data_tb), dtype=fgal_type)
+            boss_data['ra'] = boss_data_tb['RA']
+            boss_data['dec'] = boss_data_tb['DEC']
+            boss_data['z'] = boss_data_tb['Z']
+            boss_data['w'] = boss_data_tb['WEIGHT_SYSTOT']
+
+            zcut = (boss_data['z'] > zmin) & (boss_data['z'] < zmax)
+            boss_data = boss_data[zcut]
+
+            return boss_data
+        
+        def load_2dflens_data(fname, zmin, zmax):
+            t2dflens_data_tb = Table.read(fname, 
+                                    format='ascii',
+                                    header_start=0, data_start=1)
+            t2dflens_data = np.empty(len(t2dflens_data_tb), dtype=fgal_type)
+            t2dflens_data['ra'] = t2dflens_data_tb['RA']
+            t2dflens_data['dec'] = t2dflens_data_tb['Dec']
+            t2dflens_data['z'] = t2dflens_data_tb['redshift']
+            t2dflens_data['w'] = t2dflens_data_tb['wei']
+
+            zcut = (t2dflens_data['z'] > zmin) & (t2dflens_data['z'] < zmax)
+            t2dflens_data = t2dflens_data[zcut]
+
+            return t2dflens_data
+
+        def find_void_from_lcone(halo_lcone, cosmo_ccl, survey:int=0):
+            zmin = halo_lcone['z'].min()
+            zmax = halo_lcone['z'].max()
+            halo_lcone_cart = Sph2Cart(cosmo_ccl, ra=halo_lcone['ra'], dec=halo_lcone['dec'], z=halo_lcone['z'])
+            void_pos, void_radius = find_void(halo_lcone_cart, boxsize=None)
+
+            v_ra, v_dec, v_z, phys_cut = Cart2Sph(cosmo_ccl, pos=void_pos)
+            void_lcone = np.empty(len(v_ra), dtype=fvoid_type)
+            void_lcone['ra'] = v_ra
+            void_lcone['dec'] = v_dec
+            void_lcone['z'] = v_z
+            void_lcone['Rv'] = void_radius[phys_cut]
+            void_lcone['survey'] = survey
+
+            void_zcut = (void_lcone['z'] > zmin) & (void_lcone['z'] < zmax)
+            void_lcone = void_lcone[void_zcut]
+
+            return void_lcone
+        
+        ### initialize cosmology
+        logger.info("Assume Planck 2015 cosmology.")
+        cosmo_ccl = ccl.Cosmology(Omega_c=0.26, Omega_b=0.049, h=0.6774, sigma8=0.816, n_s=0.9667)
+
+        ### load boss data
+        zmin = 0.4
+        zmax = 0.6
+
+        boss_cmass_halo = load_boss_data("/data2/suchen/BOSS_dr12/SDSS_DR12_orig/galaxy_DR12v5_CMASS_North_trimmed.fits", zmin, zmax)
+        t2dflens_halo   = load_2dflens_data("/data2/suchen/2dFLenS/binned_data/data_2dfbz2_kidss_160105_rat/data_bz2_atlas_kidss_160105_rat.dat", zmin, zmax)
+
+        ### apply boss geometry
+        ### apply boss_lowz, boss_lowe2, and boss_lowe3 separately, and save.
+        ### since void finding algorithm is sensitive to galaxy number density
+        logger.info("Load boss geometry.")
+        boss_geoms = load_boss_geom_files(geom_boss_fname_list, mask_boss_fname_list)
+        logger.info("Load 2dFLenS geometry.")
+        t2dflens_geom = loadFitsMaps(mask_weight_2df_fname)
+  
+        ### find void in lightcone data
+        logger.info("Find void in lightcone data.")
+        boss_lowzcmass_void = find_void_from_lcone(boss_lowzcmass_halo, cosmo_ccl, survey=0)
+        boss_lowze2_void = find_void_from_lcone(boss_lowze2_halo, cosmo_ccl, survey=1)
+        boss_lowze3_void = find_void_from_lcone(boss_lowze3_halo, cosmo_ccl, survey=2)
+        t2dflens_void = find_void_from_lcone(t2dflens_halo, cosmo_ccl, survey=3)
+        
+        logger.info("Apply geometry cut.")
+        boss_lowzcmass_void, _ = apply_boss_lowz_cut(boss_lowzcmass_void, boss_geoms['boss_gemo'][0], boss_geoms['boss_masks'], galcone_id=None)
+        boss_lowze2_void, _ = apply_boss_lowze2e3_cut(boss_lowze2_void, boss_geoms['boss_gemo'][1], boss_geoms['boss_masks'], boss_geoms['boss_gemo'][-1], galcone_id=None)
+        boss_lowze3_void, _ = apply_boss_lowze2e3_cut(boss_lowze3_void, boss_geoms['boss_gemo'][2], boss_geoms['boss_masks'], boss_geoms['boss_gemo'][-1], galcone_id=None)
+
+        t2dflens_void, _ = apply_2dflens_geometry(t2dflens_void, t2dflens_geom, galcone_ids=None)
+
+        boss_lowzcmasstot_void = np.append(boss_lowzcmass_void, np.append(boss_lowze2_void, boss_lowze3_void))
+        boss_lowzcmasstot_2dflens_void = np.append(boss_lowzcmasstot_void, t2dflens_void)
+
+        del boss_lowzcmass_void, boss_lowze2_void, boss_lowze3_void, t2dflens_void
+
+        ### save
+        logger.info("Save to file.")
+        np.save("aux/catalogs/Data/bossdata_lowzcmasstot_2dflensdata_void.npy", boss_lowzcmasstot_2dflens_void)
+        # np.save("aux/catalogs/Data/bossdata_lowzcmasstot_void.npy", boss_lowzcmasstot_void)
     #################################################################################################
