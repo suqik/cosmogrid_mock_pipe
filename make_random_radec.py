@@ -10,6 +10,18 @@ from loguru import logger
 
 from utils.io_func import *
 
+def apply_boss_observation_mask(ra_rand, dec_rand, masks):
+    logger.info("Apply boss observational geometry")
+    
+    for ipoly in range(len(masks)):
+        masked_idx = masks[ipoly].contains(ra_rand, dec_rand)
+        total_masked_idx = masked_idx if ipoly == 0 else total_masked_idx | masked_idx
+
+    ra_rand = ra_rand[~total_masked_idx]
+    dec_rand = dec_rand[~total_masked_idx]
+    
+    return ra_rand, dec_rand
+
 def sample_radec(survey_part, nrand):
     if survey_part == "lowz":
         geoms = geoms_dict["lowz"]
@@ -17,6 +29,9 @@ def sample_radec(survey_part, nrand):
         select = (geoms.weight(ra_rand, dec_rand) != 0)
         ra_rand = ra_rand[select]
         dec_rand = dec_rand[select]
+        ### boss observational masks
+        ra_rand, dec_rand = apply_boss_observation_mask(ra_rand, dec_rand, masks)
+
         survey_rand = np.zeros(len(ra_rand))
 
     if survey_part == "lowze2":
@@ -28,10 +43,13 @@ def sample_radec(survey_part, nrand):
         select = (geoms[0].weight(ra_rand, dec_rand) != 0)
         ra_rand = ra_rand[select]
         dec_rand = dec_rand[select]
-        idx_out_mask = (geoms[1].weight(ra_rand, dec_rand) == 0)
 
+        idx_out_mask = (geoms[1].weight(ra_rand, dec_rand) == 0)
         ra_rand = ra_rand[idx_out_mask]
         dec_rand = dec_rand[idx_out_mask]
+        ### boss observational masks
+        ra_rand, dec_rand = apply_boss_observation_mask(ra_rand, dec_rand, masks)
+
         survey_rand = np.ones(len(ra_rand))
 
     if survey_part == "lowze3":
@@ -43,10 +61,13 @@ def sample_radec(survey_part, nrand):
         select = (geoms[0].weight(ra_rand, dec_rand) != 0)
         ra_rand = ra_rand[select]
         dec_rand = dec_rand[select]
-        idx_out_mask = (geoms[1].weight(ra_rand, dec_rand) == 0)
 
+        idx_out_mask = (geoms[1].weight(ra_rand, dec_rand) == 0)
         ra_rand = ra_rand[idx_out_mask]
         dec_rand = dec_rand[idx_out_mask]
+        ### boss observational masks
+        ra_rand, dec_rand = apply_boss_observation_mask(ra_rand, dec_rand, masks)
+
         survey_rand = np.ones(len(ra_rand))*2
 
     if survey_part == "cmass":
@@ -55,15 +76,42 @@ def sample_radec(survey_part, nrand):
         select = (geoms.weight(ra_rand, dec_rand) != 0)
         ra_rand = ra_rand[select]
         dec_rand = dec_rand[select]
+        ### boss observational masks
+        ra_rand, dec_rand = apply_boss_observation_mask(ra_rand, dec_rand, masks)
 
         survey_rand = np.ones(len(ra_rand))*4
-  
+
+    if survey_part == "2dflens":
+        mask_map = geoms_dict["2dflens"][0]
+
+        nside = hp.npix2nside(len(mask_map))
+        selected_pix = np.argwhere(mask_map > 0).flatten()
+        slt_ra, slt_dec = hp.pix2ang(nside, selected_pix, lonlat=True)
+        slt_ra_rdf = np.where(slt_ra>180, slt_ra-360, slt_ra)
+
+        t_ra_rdf = np.random.uniform(low=slt_ra_rdf.min(), high=slt_ra_rdf.max(), size=nrand)
+        t_ra = np.where(t_ra_rdf < 0, t_ra_rdf + 360, t_ra_rdf)
+        t_cos_dec = np.random.uniform(
+            low=np.cos(np.deg2rad(slt_dec.min())), high=np.cos(np.deg2rad(slt_dec.max())), size=nrand
+            )
+        t_dec = np.rad2deg(-np.arccos(t_cos_dec))
+
+        t_pix = hp.ang2pix(nside, t_ra, t_dec, lonlat=True)
+        pick = np.isin(t_pix, selected_pix)
+        ra_rand = t_ra[pick]
+        dec_rand = t_dec[pick]
+
+        survey_rand = np.ones(len(ra_rand))*3
+
+        # weight_map = geoms_dict["2dflens"][1]
+        # t_picked_weight = hp.get_interp_val(weight_map, ra_rand, dec_rand, lonlat=True)
+
     return ra_rand, dec_rand, survey_rand
 
 if __name__ == "__main__":
 
-    ADD_Z_RV = True
-    SURVEY_NAME = "lowz"
+    ADD_Z_RV = False
+    SURVEY_NAME = "cmass"
 
     if ADD_Z_RV:
         from utils.mkfore_utils import bounded_kde_transform, resample_bounded
@@ -72,6 +120,7 @@ if __name__ == "__main__":
         'lowz': 0,
         'lowze2': 1,
         'lowze3': 2,
+        '2dflens': 3,
         'cmass': 4
     }
 
@@ -79,15 +128,16 @@ if __name__ == "__main__":
         'lowz': 0.62,
         'lowze2': 0.013,
         'lowze3': 0.078,
+        '2dflens': 1.0,
         'cmass': 1.0
     }
 
     nrand_to_ndata = 5
 
     if SURVEY_NAME == "cmass":
-        survey_name_list = ["cmass"]
+        survey_name_list = ["cmass", "2dflens"]
 
-        vfile = "catalogs/bossdata_cmass_void.npy"
+        vfile = "catalogs/bosscmass_2dflens_data_void.npy"
         vcat = np.load(vfile) 
 
         z_rv_bounds = [
@@ -95,12 +145,12 @@ if __name__ == "__main__":
             (0.0, 60.0)
         ]
         ### output file name
-        rfile = f"/data2/suchen/CosmoGrid/Rand/boss_cmass_north_radec.npy"    
+        rfile = f"/data2/suchen/CosmoGrid/Rand/bosscmass_north_2dflens_south_radec.npy"
 
     if SURVEY_NAME == "lowz":
-        survey_name_list = ["lowz", "lowze2", "lowze3"]
+        survey_name_list = ["lowz", "lowze2", "lowze3", "2dflens"]
 
-        vfile = "catalogs/bossdata_lowz_void.npy"
+        vfile = "catalogs/bosslowz_2dflens_data_void.npy"
         vcat = np.load(vfile) 
 
         z_rv_bounds = [
@@ -108,7 +158,7 @@ if __name__ == "__main__":
             (0.0, 60.0)
         ]
         ### output file name
-        rfile = f"/data2/suchen/CosmoGrid/Rand/boss_lowz_north_radec.npy"   
+        rfile = f"/data2/suchen/CosmoGrid/Rand/bosslowz_north_2dflens_south_radec.npy"
 
     ### Announcements
     logger.info("Info")
@@ -139,6 +189,8 @@ if __name__ == "__main__":
         mask_boss_fdir + "centerpost_mask_dr12.ply"
     ]
 
+    mask_2dflens_fdir = "catalogs/masks/2dflens_geom/"
+
     masks = []
     for mask_file in mask_boss_fname_list:
         masks.append(pymangle.Mangle(mask_file))
@@ -152,6 +204,8 @@ if __name__ == "__main__":
         geoms_dict["lowze3"] = pymangle.Mangle(mask_boss_fdir + "mask_DR12v5_LOWZE3_North.ply")
     if "cmass" in survey_name_list:
         geoms_dict["cmass"] = pymangle.Mangle(mask_boss_fdir + "mask_DR12v5_CMASS_North.ply")
+    if "2dflens" in survey_name_list:
+        geoms_dict["2dflens"] = loadFitsMaps(mask_2dflens_fdir + "2dFLens_mask_weight.fits")
 
     logger.info("randomly sample RA DEC")
 
@@ -189,20 +243,6 @@ if __name__ == "__main__":
     if ADD_Z_RV:
         z_rand = np.concatenate(z_rand)
         Rv_rand = np.concatenate(Rv_rand)
-
-    logger.info("Apply boss observational geometry")
-    
-    for ipoly in range(len(masks)):
-        masked_idx = masks[ipoly].contains(ra_rand, dec_rand)
-        total_masked_idx = masked_idx if ipoly == 0 else total_masked_idx | masked_idx
-
-    ra_rand = ra_rand[~total_masked_idx]
-    dec_rand = dec_rand[~total_masked_idx]
-    survey_rand = survey_rand[~total_masked_idx]
-    
-    if ADD_Z_RV:
-        z_rand = z_rand[~total_masked_idx]
-        Rv_rand = Rv_rand[~total_masked_idx]
 
     rand_cat = np.empty(len(ra_rand), dtype=fvoid_type)
     rand_cat["ra"] = ra_rand
