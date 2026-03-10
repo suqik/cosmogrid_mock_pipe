@@ -19,6 +19,7 @@ openmpi = { version = "4.1.*", build = "external_*" }
 treecorr = ">=5.1.1,<6"
 namaster = ">=2.4,<3"
 ultranest = ">=4.4.0,<5"
+cython = ">=3.2.4,<4"
 
 [pypi-dependencies]
 cython = "*"
