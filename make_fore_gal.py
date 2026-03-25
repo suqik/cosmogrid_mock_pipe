@@ -98,22 +98,20 @@ nz_boss_fname_list = {
 
 nz_2dflens_fname = nz_fbase + "nbar_2dFLens_south_data.dat"
 
-''' 4. Output files '''
-
-out_dir = f"/data2/suchen/CosmoGrid/high_ngal_suits_wrsd/HOD_{zbin_name}/"
-out_fmt = "cosmo_{:06d}_run_{:d}_HOD_{:d}_run_{:d}_{:s}.npy"
-if not os.path.isdir(out_dir):
-    os.mkdir(out_dir)
-
-hod_param_out = f"{wdir}/cfgs/hod/hod_5params_dict_high_ngal_wcosmo2.json"
-
-''' 5. HOD setup '''
+''' 4. HOD setup '''
 
 model = 2
-num_params = 6 # Number of parameters of HOD model
+### Note `fic` should be last of the `model_params_names` since 
+### it is a derived parameter and not considered in the prior
+if model == 2:
+    model_params_names = 'logMcut', 'sigma_logM', 'logM1', 'k', 'alpha', 'fic' # for model == 2
+if model == 3:
+    model_params_names = 'logMcut', 'sigma_logM', 'logM1', 'logM0', 'alpha', 'fic' # SIMBIG HOD params, for model==3
+if model == 4:
+    model_params_names = 'logMcut', 'sigma_logM', 'logM1', 'k', 'alpha', 'AB_cen','AB_sat', 'fic' # for model == 4
+
+num_params = len(model_params_names) # Number of parameters of HOD model
 nhod_per_cosmo = 10 # Number of varied HOD parameter values per cosmology
-model_params_names = 'logMcut', 'sigma_logM', 'logM1', 'k', 'alpha', 'fic' # for model == 2
-# model_params_names = 'logMcut', 'sigma_logM', 'logM1', 'logM0', 'alpha', 'fic' # SIMBIG HOD params, for model==3
 Num_ptcl_requirement = 12
 verbose = True
 num_seeds = 1
@@ -121,12 +119,23 @@ init_seed = 33000
 z_space = False
 ngal_ref = 4e-4
 
-''' 6. Running modes specifications '''
+LOAD_HOD_PAR = True # if load exist hod params
+if model == 2:
+    # hod_param_out = f"{wdir}/cfgs/hod/hod_5params_dict_high_ngal_wcosmo2_ws8.json"    
+    hod_param_out = f"{wdir}/cfgs/hod/hod_5params_dict_Nsat1000.json"
+if model == 4:
+    raise NotImplementedError
+    # hod_param_out = f"{wdir}/cfgs/hod/hod_7params_dict_high_ngal_wcosmo2_ws8_wAB.json"
 
-### 6.1 If apply RSD effect
+''' 5. Running modes specifications '''
+
+### 5.1 If apply RSD effect
+### Note: Do not recommend to turn off `ADD_RSD`
+### since when turn on RSD, the real redshift will
+### als be saved int the catalog.
 ADD_RSD = True
 
-### 6.2 If using rotations to augment data
+### 5.2 If using rotations to augment data
 ROT = False # if True, will rotate the galaxy catalogs
 rot_degrees_list = [
     [0,50,0],
@@ -139,20 +148,26 @@ rot_degrees_list = [
     [270,0,-50],
 ]
 
-### 6.3 Running modes, can only activate one of these three
+### 5.3 Running modes, can only activate one of these three
 HALO_ONLY = False # only use halo, which preserve the ngal but not G-H connection
 FIX_HOD = False # use the same G-H connection but cannot preserve the ngal
 VARY_HOD = True # preserve the ngal, as well as vary G-H connection
 
 if VARY_HOD:
-    LOAD_HOD_PAR = True # if load exist hod params
     #### prior for model == 2
-    param_prior_low  = np.array([12.5, 1e-5, 12.5, 0.00, 0.0])
-    param_prior_high = np.array([13.5, 3.00, 15.0, 10.0, 2.0])
+    if model == 2:
+        param_prior_low  = np.array([12.5, 1e-5, 12.5, 0.00, 0.0])
+        param_prior_high = np.array([13.5, 3.00, 15.0, 10.0, 2.0])
 
     #### prior from SIMBIG, for model == 3
-    # param_prior_low = np.array([12., 0.1, 13., 13., 0.0])
-    # param_prior_high = np.array([14., 0.6, 15., 15., 1.5])
+    if model == 3:
+        param_prior_low = np.array([12., 0.1, 13., 13., 0.0])
+        param_prior_high = np.array([14., 0.6, 15., 15., 1.5])
+
+    # #### prior for model == 4
+    if model == 4:
+        param_prior_low  = np.array([12.5, 1e-5, 12.5, 0.00, 0.0, -1.0, -1.0])
+        param_prior_high = np.array([13.5, 3.00, 15.0, 10.0, 2.0,  1.0,  1.0])
 
 if FIX_HOD:
     raise NotImplementedError("FIX HOD run has been deprecated. Please wait for future updates.")
@@ -163,6 +178,18 @@ if FIX_HOD:
     # fixed_model_params_dict = {}
     # for i in range(num_params):
     #     fixed_model_params_dict[model_params_names[i]] = fid_hod_model_param[i]
+
+''' 6. Output catalog files '''
+
+dirbase = "Nsat1000"
+if ADD_RSD:
+    dirbase += "_wrsd"
+
+if model == 4:
+    dirbase += "_wAB"
+
+out_dir = f"/data2/suchen/CosmoGrid/{dirbase}/HOD_{zbin_name}/"
+out_fmt = "cosmo_{:06d}_run_{:d}_HOD_{:d}_run_{:d}_{:s}.npy"
 
 ''' 7. Show config info '''
 
@@ -180,13 +207,11 @@ elif VARY_HOD:
     logger.info("VARY_HOD mode")
     logger.info(f"Ngal ref: {ngal_ref*1e4:.2f} e-4")
     if LOAD_HOD_PAR:
-        logger.info("Load HOD pars from:")
-        logger.info(f"{hod_param_out}")
+        logger.info(f"Load HOD pars from: {hod_param_out}")
     else:
         logger.info(f"HOD prior low: {param_prior_low}")
         logger.info(f"HOD prior high: {param_prior_high}")
-        logger.info( "Will save cosmo and HOD pars to:")
-        logger.info(f"{hod_param_out}")
+        logger.info(f"Will save cosmo and HOD pars to: {hod_param_out}")
 
 if ROT:
     logger.info("Use rotation mode")
@@ -225,7 +250,7 @@ def load_halocat(cpar_fname, halo_fname, ofmt='hod', clean=True):
         ## Initialize HOD model class
         hod_halo_cat = pkd_to_hod_type(pkd_halo_infos, cosmo=cosmo_ccl, pmass=pmass, boxsize=Lbox, redshift=redshift)
 
-        return hod_halo_cat, OmegaM
+        return hod_halo_cat
 
 def find_fic(halo_mass, hod_param_vals, model_lb=2):
     if isinstance(hod_param_vals, list) or isinstance(hod_param_vals, np.ndarray):
@@ -246,7 +271,12 @@ def find_fic(halo_mass, hod_param_vals, model_lb=2):
 
     tmp_dict = model_params_dict.copy()
     tmp_dict['fic'] = 1.0
-    ctr = MWCens_IC(redshift=redshift)
+
+    if model_lb == 2 or model_lb == 3:
+        ctr = MWCens_IC(redshift=redshift)
+    elif model_lb == 4:
+        ctr = ABMWCens_IC(redshift=redshift)
+
     ctr.param_dict = tmp_dict
     Nctr = ctr.mean_occupation(prim_haloprop=massbin)
 
@@ -254,6 +284,8 @@ def find_fic(halo_mass, hod_param_vals, model_lb=2):
         sat = MWSats(redshift=redshift, cenocc_model=ctr, modulate_with_cenocc=True)
     elif model_lb == 3:
         sat = MWSats2(redshift=redshift, cenocc_model=ctr, modulate_with_cenocc=True)
+    elif model_lb == 4:
+        sat = ABMWSats(redshift=redshift, cenocc_model=ctr, modulate_with_cenocc=True)
 
     sat.param_dict = tmp_dict
     Nsat = sat.mean_occupation(prim_haloprop=massbin)
@@ -287,6 +319,7 @@ def find_hod_params_alive(halo_mass, num_pool=30000, seedini=9782, seed_offset=0
     count = 0
     idx = 0
     seed = seedini + seed_offset
+    ### here only 5 parameters; no f_ic
     lhc_sampler = qmc.LatinHypercube(d=len(param_prior_low), seed=seed)
     hod_params_pool = lhc_sampler.random(n=num_pool)
     hod_params_pool = qmc.scale(hod_params_pool, param_prior_low, param_prior_high)
@@ -314,19 +347,21 @@ def find_hod_params_alive(halo_mass, num_pool=30000, seedini=9782, seed_offset=0
             break
 
         ## update fic
-        if model == 2 or model == 3:
+        if model == 2 or model == 3 or model == 4:
             f_ic, Nsat = find_fic(halo_mass, curr_hod_params, model_lb=model)
             ## FIXME: lower bound of f_ic may need careful consideration.
             # if f_ic > 0.5 and f_ic <= 1.0 and Nsat.max() < 100: # avoid too many satellite galaxies in one halo
-            if f_ic > 0 and f_ic <= 1.0 and Nsat.max() < 100: # avoid too many satellite galaxies in one halo
+            if f_ic > 0 and f_ic <= 1.0 and Nsat.max() < 1000: # avoid too many satellite galaxies in one halo
                 count += 1  
                 idx += 1
+                ### here we append f_ic to construct total HOD parameters
                 hod_params_alive.append(np.append(curr_hod_params, f_ic))
             else:
                 idx += 1
                 continue
 
     if not FAILED_FLAG:
+        ### return parameter list with f_ic
         return hod_params_alive
     else:
         return None
@@ -543,7 +578,7 @@ def make_survey(gal_pos:np.ndarray, masks:dict, cosmo_ccl:ccl.Cosmology, nofz_in
 
 
 ''' ===========================================   Running pipeline   ================================================= '''
-def run_halo_only(halo_pos_mass_dict):
+def run_halo_only(cosmo_ccl, halo_pos_mass_dict, masks, nofz_info):
     ### choose the most massive halos according to reference ngal
     Ngal = int(ngal_ref*Lbox*Lbox*Lbox)
     logger.debug(f"Nhalo: {len(halo_pos_mass_dict['mass'])}   Ngal targer: {Ngal}")
@@ -558,7 +593,8 @@ def run_halo_only(halo_pos_mass_dict):
 
     return galcone_output
 
-def run_vary_hod(halo_file, hod_halocat, OmegaM, hod_params_alive):
+def run_vary_hod(cosmo_ccl, halo_file, hod_halocat, hod_params_alive, masks, nofz_info):
+    OmegaM = cosmo_ccl["Omega_c"] + cosmo_ccl["Omega_b"]
     galcone_output_dict = {}
     ### apply HOD and geometry cut
     for ihod, each_hod_params in enumerate(hod_params_alive):
@@ -597,11 +633,12 @@ def initial_hod_param_dict(cosmo_labels, hod_param_out=None):
     return hod_param_dict_tot
 
 def prepare_hod_params(hod_halocat, seed_offset=0):
+    ''' Note `hod_params_alive` includes f_ic parameter '''
     if not LOAD_HOD_PAR:
         halo_mass = hod_halocat.halo_table["halo_mvir"].value
-        hod_params_alive = find_hod_params_alive(halo_mass, num_pool=30000, seedini=9782, seed_offset=seed_offset)
+        hod_params_alive = find_hod_params_alive(halo_mass, num_pool=100000, seedini=9782, seed_offset=seed_offset)
     else:
-        if len(hod_param_dict_tot['cosmo{:06d}'.format(cosmo_label)]) == 11:
+        if len(hod_param_dict_tot['cosmo{:06d}'.format(cosmo_label)]) == int(nhod_per_cosmo + 1):
             hod_params_alive = [hod_param_dict_tot['cosmo{:06d}'.format(cosmo_label)]['HOD{}'.format(jhod)] \
                                 for jhod in range(nhod_per_cosmo)]
         else:
@@ -620,6 +657,117 @@ def save_hod_param_dict(all_hod_params, hod_param_out):
         json.dump(final_hod_params, f, indent=4)
 
     return None
+
+def prepare_masks():
+    masks = {}
+    masks['boss_geom'] = {}
+    masks['boss_masks'] = []
+
+    logger.info("Load mask files.")
+
+    for ipart_name in boss_part_names:
+        masks['boss_geom'][ipart_name] = pymangle.Mangle(geom_boss_fname_list[ipart_name])
+
+    if 'boss_lowze2' in boss_part_names or 'boss_lowze3' in boss_part_names:
+        masks['boss_geom']['boss_lowz'] = pymangle.Mangle(geom_boss_fname_list['boss_lowz'])
+
+    if len(boss_part_names) > 0:
+        for mask_file in mask_boss_fname_list:
+            masks['boss_masks'].append(pymangle.Mangle(mask_file))
+
+    ### load 2dflens survey geometry
+    if MK_2DFLENS:
+        masks['2dflens'] = loadFitsMaps(mask_weight_2df_fname)
+
+    return masks
+
+def prepare_nofz():
+    nofz_info = {}
+
+    logger.info("Load n(z) files.")
+
+    for ipart_name in boss_part_names:
+        nofz = np.loadtxt(nz_boss_fname_list[ipart_name], usecols=(1,2,3,5)) # zmin, zmax, nz, shell_vol
+        argstart = np.argwhere(nofz[:,0] == zmin)[0,0]
+        argend = np.argwhere(nofz[:,1] == zmax)[0,0]
+
+        nofz_info = make_nofz_info(nofz_info, ipart_name, nofz[argstart:argend+2,0], nofz[argstart:argend+1,3], nofz[argstart:argend+1,2])
+
+    ### FIXME: it seems that BOSS CMASS data has a different number density than that given in nofz
+    if 'boss_cmass' in boss_part_names:
+        nofz_info['boss_cmass']['nz_ref'] *= 0.93 
+
+    ### 2dflens
+    if MK_2DFLENS:
+        nofz_info['2dflens'] = {}
+        nofz = np.loadtxt(nz_2dflens_fname, usecols=(1,2,3,4)) # zmin, zmax, nz, shell_vol
+        argstart = np.argwhere(nofz[:,0] == zmin)[0,0]
+        argend = np.argwhere(nofz[:,1] == zmax)[0,0]
+        nofz_info = make_nofz_info(nofz_info, '2dflens', nofz[argstart:argend+2,0], nofz[argstart:argend+1,3], nofz[argstart:argend+1,2])
+
+    return nofz_info
+
+def run_single_cosmo(cosmo_label, hod_param_dict_tot, masks=None, nofz_info=None):
+
+    logger.info(f"Start processing cosmo_label {cosmo_label}")
+
+    ### specify cosmo par file name & halo file name
+    cpar_fname = os.path.join(sim_fmt.format(cosmo_label, rlz_label), "params.yml")
+    halo_fname = os.path.join(sim_fmt.format(cosmo_label, rlz_label), halo_fmt.format(redshift_label))
+
+    ### initialize cosmology
+    cosmo_ccl = get_cosmo_from_file(cpar_fname, otype="ccl")
+
+    ### initialize parameter dictionary
+    if VARY_HOD and not LOAD_HOD_PAR:
+        hod_param_dict_tot['cosmo{:06d}'.format(cosmo_label)]['cpar'] = {
+            "Om": cosmo_ccl['Omega_c'] + cosmo_ccl['Omega_b'],
+            "Ob": cosmo_ccl['Omega_b'],
+            "H0" : cosmo_ccl['h']*100,
+            "ns": cosmo_ccl['n_s'],
+            "s8": cosmo_ccl['sigma8'],
+            "w0": cosmo_ccl['w0']
+        }
+
+    if HALO_ONLY:
+        #### load halo info
+        halo_pos_mass_dict = get_pkd_halo_attrs(halo_fname, ["pos", "mass"], Lbox, redshift)
+        #### main process
+        galcone_output = run_halo_only(cosmo_ccl, halo_pos_mass_dict, masks, nofz_info)
+        #### save galcone
+        gal_fname = os.path.join(out_dir, out_fmt.format(cosmo_label, rlz_label, 0, 0, survey_specify))
+        np.save(gal_fname, galcone_output)
+
+    else:
+        #### load halo catalog
+        halo_fname = sim_fmt.format(cosmo_label, rlz_label) + halo_fmt.format(redshift_label)
+        hod_halocat = load_halocat(cpar_fname, halo_fname, ofmt='hod')
+
+        ### vary HOD run
+        if VARY_HOD:
+            #### prepare HOD params
+            logger.info("Prepare HOD params")
+            hod_params_alive = prepare_hod_params(hod_halocat, seed_offset=cosmo_label)
+
+            #### loop over hod params
+            if hod_params_alive is not None:
+
+                #### save HOD parameter to param dict
+                if not LOAD_HOD_PAR:
+                    for ihod, each_hod_params in enumerate(hod_params_alive):
+                        hod_param_dict_tot['cosmo{:06d}'.format(cosmo_label)]['HOD{}'.format(ihod)] = list(each_hod_params)
+
+                #### vary HOD main process, including apply hod and geometry cut
+                galcone_output_dict = run_vary_hod(cosmo_ccl, halo_fname, hod_halocat, hod_params_alive, masks, nofz_info)
+
+                #### save to file
+                logger.info("Save galaxy catalog")
+                for ihod in range(nhod_per_cosmo):
+                    for iseed in range(len(galcone_output_dict[f'hod{ihod}'])):
+                        gal_fname = os.path.join(out_dir, out_fmt.format(cosmo_label, rlz_label, ihod, iseed, survey_specify))
+                        np.save(gal_fname, galcone_output_dict[f'hod{ihod}'][f'seed{iseed}'])   
+
+    return hod_param_dict_tot
 
 ''' ================================================================================================================== '''
 
@@ -643,10 +791,14 @@ if __name__ == "__main__":
         cosmo_labels_tot = get_cosmo_name_list_original("/data3/suchen/CosmoGridV1/grid/dirnames.txt")
         ######## For Test #######
         if TEST_MODE:
-            cosmo_labels_tot = [1]
+            cosmo_labels_tot = [1,2,3,4]
         #########################
         k, m = divmod(len(cosmo_labels_tot), size)
         chunks = [cosmo_labels_tot[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] for i in range(size)]
+
+        if not os.path.isdir(out_dir):
+            logger.info(f"Create dictionary: {out_dir}")
+            os.makedirs(out_dir)
     else:
         chunks = None
 
@@ -660,49 +812,11 @@ if __name__ == "__main__":
 
     # >>> =================================       preparation       ================================= <<<
 
-    masks = {}
-    masks['boss_geom'] = {}
-    masks['boss_masks'] = []
+    ### prepare masks
+    masks = prepare_masks()
 
-    logger.info("Load mask files.")
-
-    for ipart_name in boss_part_names:
-        masks['boss_geom'][ipart_name] = pymangle.Mangle(geom_boss_fname_list[ipart_name])
-
-    if 'boss_lowze2' in boss_part_names or 'boss_lowze3' in boss_part_names:
-        masks['boss_geom']['boss_lowz'] = pymangle.Mangle(geom_boss_fname_list['boss_lowz'])
-
-    if len(boss_part_names) > 0:
-        for mask_file in mask_boss_fname_list:
-            masks['boss_masks'].append(pymangle.Mangle(mask_file))
-
-    ### load 2dflens survey geometry
-    if MK_2DFLENS:
-        masks['2dflens'] = loadFitsMaps(mask_weight_2df_fname)
-
-    logger.info("Load n(z) files.")
-
-    ### load nofz information
-    nofz_info = {}
-
-    for ipart_name in boss_part_names:
-        nofz = np.loadtxt(nz_boss_fname_list[ipart_name], usecols=(1,2,3,5)) # zmin, zmax, nz, shell_vol
-        argstart = np.argwhere(nofz[:,0] == zmin)[0,0]
-        argend = np.argwhere(nofz[:,1] == zmax)[0,0]
-
-        nofz_info = make_nofz_info(nofz_info, ipart_name, nofz[argstart:argend+2,0], nofz[argstart:argend+1,3], nofz[argstart:argend+1,2])
-
-    ### FIXME: it seems that BOSS CMASS data has a different number density than that given in nofz
-    if 'boss_cmass' in boss_part_names:
-        nofz_info['boss_cmass']['nz_ref'] *= 0.93 
-
-    ### 2dflens
-    if MK_2DFLENS:
-        nofz_info['2dflens'] = {}
-        nofz = np.loadtxt(nz_2dflens_fname, usecols=(1,2,3,4)) # zmin, zmax, nz, shell_vol
-        argstart = np.argwhere(nofz[:,0] == zmin)[0,0]
-        argend = np.argwhere(nofz[:,1] == zmax)[0,0]
-        nofz_info = make_nofz_info(nofz_info, '2dflens', nofz[argstart:argend+2,0], nofz[argstart:argend+1,3], nofz[argstart:argend+1,2])
+    ### prepare nofz info
+    nofz_info = prepare_nofz()
 
     # ====================================================================================================
 
@@ -717,59 +831,8 @@ if __name__ == "__main__":
 
     for cosmo_label in cosmo_labels:
 
-        logger.info(f"Start processing cosmo_label {cosmo_label}")
-
-        ### specify cosmo par file name & halo file name
-        cpar_fname = os.path.join(sim_fmt.format(cosmo_label, rlz_label), "params.yml")
-        halo_fname = os.path.join(sim_fmt.format(cosmo_label, rlz_label), halo_fmt.format(redshift_label))
-
-        ### initialize cosmology
-        cosmo_ccl = get_cosmo_from_file(cpar_fname, otype="ccl")
-
-        ### initialize parameter dictionary
-        if VARY_HOD and not LOAD_HOD_PAR:
-            hod_param_dict_tot['cosmo{:06d}'.format(cosmo_label)]['cpar'] = {
-                "Om": cosmo_ccl['Omega_c'] + cosmo_ccl['Omega_b'],
-                "Ob": cosmo_ccl['Omega_b'],
-                "H0" : cosmo_ccl['h'],
-                "ns": cosmo_ccl['n_s'],
-                "s8": cosmo_ccl['sigma8'],
-                "w0": cosmo_ccl['w0']
-            }
-
-        if HALO_ONLY:
-            #### load halo info
-            halo_pos_mass_dict = get_pkd_halo_attrs(halo_fname, ["pos", "mass"], Lbox, redshift)
-            #### main process
-            galcone_output = run_halo_only(halo_pos_mass_dict)
-            #### save galcone
-            gal_fname = os.path.join(out_dir, out_fmt.format(cosmo_label, rlz_label, 0, 0, survey_specify))
-            np.save(gal_fname, galcone_output)
-
-        else:
-            #### load halo catalog
-            halo_fname = sim_fmt.format(cosmo_label, rlz_label) + halo_fmt.format(redshift_label)
-            hod_halocat, OmegaM = load_halocat(cpar_fname, halo_fname, ofmt='hod')
-
-            ### vary HOD run
-            if VARY_HOD:
-                #### prepare HOD params
-                hod_params_alive = prepare_hod_params(hod_halocat, seed_offset=cosmo_label)
-                #### loop over hod params
-                if hod_params_alive is not None:
-                    if not LOAD_HOD_PAR:
-                        #### save HOD parameter to param dict
-                        for ihod, each_hod_params in enumerate(hod_params_alive):
-                            hod_param_dict_tot['cosmo{:06d}'.format(cosmo_label)]['HOD{}'.format(ihod)] = list(each_hod_params)
-                    #### vary HOD main process, including apply hod and geometry cut
-                    galcone_output_dict = run_vary_hod(halo_fname, hod_halocat, OmegaM, hod_params_alive)
-                    #### save to file
-                    for ihod in range(nhod_per_cosmo):
-                        for iseed in range(len(galcone_output_dict[f'hod{ihod}'])):
-                            gal_fname = os.path.join(out_dir, out_fmt.format(cosmo_label, rlz_label, ihod, iseed, survey_specify))
-                            np.save(gal_fname, galcone_output_dict[f'hod{ihod}'][f'seed{iseed}'])   
-                else:
-                    continue
+        hod_param_dict_tot = run_single_cosmo(cosmo_label, hod_param_dict_tot, masks, nofz_info)
+        # hod_param_dict_tot = run_single_cosmo(cosmo_label, hod_param_dict_tot)
 
     if VARY_HOD and not LOAD_HOD_PAR:
         all_hod_params = comm.gather(hod_param_dict_tot, root=0)
