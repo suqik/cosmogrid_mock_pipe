@@ -256,8 +256,9 @@ def make_lightcone_tiles(
     lightcone_prop: np.ndarray
         Other properties of particles in the lightcone.
     '''
-    if other_prop.shape[0] != position.shape[0]:
-        raise ValueError(f"The shape of the position ({position.shape[0]}) and the property ({other_prop.shape[0]}) do not match!")
+    if other_prop is not None:
+        if other_prop.shape[0] != position.shape[0]:
+            raise ValueError(f"The shape of the position ({position.shape[0]}) and the property ({other_prop.shape[0]}) do not match!")
     
     if type(ctr) is int:
         ctr = [ctr]*3
