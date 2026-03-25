@@ -9,13 +9,13 @@ import numpy as np
 from scipy.special import erf
 import warnings
 
-from halotools.empirical_models import HodModelFactory
+from halotools.empirical_models import HodModelFactory, HeavisideAssembias
 from halotools.empirical_models import TrivialPhaseSpace, NFWPhaseSpace
 
 from halotools.empirical_models import occupation_model_template, model_defaults
 from halotools.custom_exceptions import HalotoolsError
 
-# >>> ====================================    model class    ==================================== <<<
+# >>> ==================================      model class      ================================== <<<
 class ModelClass():
   """ The class that populates the halo catalog with galaxies
   given the config file """
@@ -34,6 +34,8 @@ class ModelClass():
       model_name = 'MW_fic'
     elif self.model == 3:
       model_name = 'MW_fic2'
+    elif self.model == 4:
+      model_name = 'MW_ficAssemblyBias'    
     else:
       raise ValueError('Unrecognised model')
     self.parameters_names = param_names
@@ -78,6 +80,13 @@ class ModelClass():
     elif self.model == 3:
       cens_occ_model = MWCens_IC(redshift=self.redshift)
       sats_occ_model = MWSats2(redshift=self.redshift, cenocc_model=cens_occ_model, modulate_with_cenocc=True)
+    elif self.model == 4:
+      # We use 'rHalf' as the secondary property.
+      # Change 'rHalf' to match your catalog column name exactly (e.g. 'halo_rhalf') if different.
+      sec_key = 'halo_rhalf' 
+      cens_occ_model = ABMWCens_IC(redshift=self.redshift, sec_haloprop_key=sec_key)
+      sats_occ_model = ABMWSats(redshift=self.redshift, cenocc_model=cens_occ_model, 
+                                modulate_with_cenocc=True, sec_haloprop_key=sec_key)
 
     cens_prof_model = TrivialPhaseSpace(redshift=self.redshift)
     sats_prof_model = NFWPhaseSpace(redshift=self.redshift)
@@ -142,7 +151,12 @@ class ModelClass():
     if self.verbose:
       print('SubSTATUS: Populate the halo catalog with galaxies using {} as seed...'.format(seed))
 
-    self.model_instance.populate_mock(halo_cat, Num_ptcl_requirement=self.Num_ptcl_requirement, seed=seed)
+    # check rhalf columns has been read in 
+    print("Halo Table Columns:", halo_cat.halo_table.colnames)
+
+    self.model_instance.populate_mock(halo_cat, Num_ptcl_requirement=self.Num_ptcl_requirement, 
+                                      seed=seed)
+            
     gtable = self.model_instance.mock.galaxy_table
     idx = (gtable['gal_type'] == 'centrals')
     gtable['gal_type'] = idx.astype(int)
@@ -161,8 +175,10 @@ class ModelClass():
 
     # gal_sample = np.rec.fromarrays([gtable['x'], gtable['y'], z_rsd, gtable['z'], gtable['gal_type']], dtype=[('x', 'f4'), ('y', 'f4'), ('z_rsd', 'f4'), ('z', 'f4'), ('gal_type', 'i4')])
     gal_sample = np.rec.fromarrays(
-      [gtable['x'], gtable['y'], gtable['z'], gtable['vx'], gtable['vy'], gtable['vz'], gtable['gal_type']], 
-      dtype=[('x', 'f4'), ('y', 'f4'), ('z', 'f4'), ('vx', 'f4'), ('vy', 'f4'), ('vz', 'f4'), ('gal_type', 'i4')]
+      [gtable['x'], gtable['y'], gtable['z'], gtable['vx'], gtable['vy'], gtable['vz'], gtable['gal_type'], 
+       gtable['halo_mvir'], gtable['halo_rhalf'], gtable['halo_id']], 
+      dtype=[('x', 'f4'), ('y', 'f4'), ('z', 'f4'), ('vx', 'f4'), ('vy', 'f4'), ('vz', 'f4'), ('gal_type', 'i4'),
+            ('halo_mvir', 'f4'),('halo_rhalf', 'f4'),('halo_id', 'i4') ]
       )
 
     return seed, gal_sample
@@ -242,6 +258,7 @@ class MWCens(occupation_model_template.OccupationComponent):
         prim_haloprop_key=prim_haloprop_key, **kwargs)
     self.redshift = redshift
     self.param_dict = self.get_default_parameters(self.threshold)
+    self.list_of_haloprops_needed = ['halo_id','halo_rhalf']
 
   def mean_occupation(self, **kwargs):
     if 'table' in list(kwargs.keys()):
@@ -294,6 +311,7 @@ class MWCens_IC(occupation_model_template.OccupationComponent):
         prim_haloprop_key=prim_haloprop_key, **kwargs)
     self.redshift = redshift
     self.param_dict = self.get_default_parameters(self.threshold)
+    self.list_of_haloprops_needed = ['halo_id','halo_rhalf']
 
   def mean_occupation(self, **kwargs):
     if 'table' in list(kwargs.keys()):
@@ -311,6 +329,9 @@ class MWCens_IC(occupation_model_template.OccupationComponent):
 
     mean_ncen = self.param_dict['fic'] * 0.5 * (1.0 + erf((logM - ln10 * self.param_dict['logMcut']) * \
         inv_sqrt2 / self.param_dict['sigma_logM']))
+
+    mean_ncen = np.maximum(0, mean_ncen)
+    
     return mean_ncen
 
   def get_default_parameters(self, threshold):
@@ -338,6 +359,7 @@ class MWSats(occupation_model_template.OccupationComponent):
         prim_haloprop_key=prim_haloprop_key, **kwargs)
     self.redshift = redshift
     self.param_dict = self.get_default_parameters(self.threshold)
+    self.list_of_haloprops_needed = ['halo_id','halo_rhalf']
 
     if cenocc_model is None:
       cenocc_model = MWCens(prim_haloprop_key=prim_haloprop_key, \
@@ -424,6 +446,7 @@ class MWSats2(occupation_model_template.OccupationComponent):
         prim_haloprop_key=prim_haloprop_key, **kwargs)
     self.redshift = redshift
     self.param_dict = self.get_default_parameters(self.threshold)
+    self.list_of_haloprops_needed = ['halo_id','halo_rhalf']
 
     if cenocc_model is None:
       cenocc_model = MWCens(prim_haloprop_key=prim_haloprop_key, \
@@ -627,3 +650,40 @@ class ContrerasSats(occupation_model_template.OccupationComponent):
         'alpha': 0.73}
         )
     return param_dict
+
+
+class ABMWCens_IC(HeavisideAssembias, MWCens_IC):
+  '''
+    MWCens_IC model decorated with Heaviside Assembly Bias.
+    New parameter: 'mean_occupation_centrals_assembias_param1' (-1 to 1)
+  '''
+  def __init__(self, sec_haloprop_key, **kwargs):
+    # Initialize the base Occupation model (MWCens) first
+    MWCens_IC.__init__(self, **kwargs)
+    
+    # Initialize the Assembly Bias wrapper
+    HeavisideAssembias.__init__(self,
+      method_name_to_decorate='mean_occupation',
+      sec_haloprop_key=sec_haloprop_key,
+      assembias_param1_key='AB_cen',
+      lower_assembias_bound= 0, 
+      upper_assembias_bound= 1.0,
+      **kwargs)
+
+class ABMWSats(HeavisideAssembias, MWSats):
+  '''
+    MWSats model decorated with Heaviside Assembly Bias.
+  '''
+  def __init__(self, sec_haloprop_key, **kwargs):
+    
+    # Initialize the base Occupation model (MWSats) first
+    MWSats.__init__(self, **kwargs)
+    
+    # Initialize the Assembly Bias wrapper
+    HeavisideAssembias.__init__(self,
+      method_name_to_decorate='mean_occupation',
+      sec_haloprop_key=sec_haloprop_key,
+      assembias_param1_key='AB_sat',
+      lower_assembias_bound= 0, 
+      upper_assembias_bound=np.inf,
+      **kwargs)
