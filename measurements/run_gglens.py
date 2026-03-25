@@ -416,7 +416,7 @@ def find_matching_samples_table(ref_cat, match_cat, nside_x=64, nside_y=64):
     return match_cat[match_selected]
 
 if __name__ == "__main__":
-    n_jobs = 28
+    n_jobs = 16
 
     ''' --------- set up separation bins -------- '''
     rvmin = 15.0 # Mpc/h
@@ -520,16 +520,16 @@ if __name__ == "__main__":
 
     esdn, esdn_cov, esds, esds_cov, esd, esd_cov = runner.run(njk=100, n_jobs=n_jobs, logger=logger)
 
-    logger.info(f"Save to file {ofilename}")
+    # logger.info(f"Save to file {ofilename}")
 
-    esdn.write(ofilename.replace('.fits', '_oN.fits'), overwrite=True)
-    np.save(ofilename.replace('.fits', '_oN.cov.npy'), esdn_cov)
+    # esdn.write(ofilename.replace('.fits', '_oN.fits'), overwrite=True)
+    # np.save(ofilename.replace('.fits', '_oN.cov.npy'), esdn_cov)
 
-    esds.write(ofilename.replace('.fits', '_oS.fits'), overwrite=True)
-    np.save(ofilename.replace('.fits', '_oS.cov.npy'), esds_cov)
+    # esds.write(ofilename.replace('.fits', '_oS.fits'), overwrite=True)
+    # np.save(ofilename.replace('.fits', '_oS.cov.npy'), esds_cov)
 
-    esd.write(ofilename, overwrite=True)
-    np.save(ofilename.replace('.fits', '.cov.npy'), esd_cov)
+    # esd.write(ofilename, overwrite=True)
+    # np.save(ofilename.replace('.fits', '.cov.npy'), esd_cov)
 
     # esd = runner.run(njk=1, n_jobs=n_jobs, logger=logger)
     # logger.info(f"Save to file {ofilename}")

@@ -1,7 +1,7 @@
 '''
 Script to apply different kinds of measurements.
 1. Angular power spectrum.
-2. Two point correlation functions (xi(r), wp(r), xi_(0,2,4)).
+2. Angular two point correlation functions w(theta), gamma_t(theta)
 3. Cosmic shear two point correlation function (xi+, xi-).
 ...
 '''
