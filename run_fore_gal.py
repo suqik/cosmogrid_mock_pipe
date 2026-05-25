@@ -50,14 +50,14 @@ elif redshift_label == 110:
     zmax = 0.6
     zbin_name = "cmass"
 
-    # survey_part_names += ['boss_cmass']
-    # survey_specify += "boss_north"
+    survey_part_names += ['boss_cmass']
+    survey_specify += "boss_north"
 
-    # survey_part_names += ['2dflens_south']
-    # survey_specify += "_2dflens_south"
+    survey_part_names += ['2dflens_south']
+    survey_specify += "_2dflens_south"
 
-    survey_part_names += ['boss_cmass_sgc']
-    survey_specify += "boss_south"
+    # survey_part_names += ['boss_cmass_sgc']
+    # survey_specify += "boss_south"
 
 print(survey_specify)
 
@@ -120,8 +120,7 @@ Num_ptcl_requirement = 12
 verbose = True
 num_seeds = 1
 init_seed = 33000 ## initial seed for generating galaxy catalog
-z_space = False
-ngal_ref = 2.05e-4
+ngal_ref = 3.5e-4
 
 LOAD_HOD_PAR = False # if load exist hod params
 POPULATE = True # if populate galaxy
@@ -188,13 +187,13 @@ if model == 4:
 
 SAVE_BOX = False
 box_out_dir = f"/data2/suchen/CosmoGrid/{dirbase}/HOD_{zbin_name}_box/grid/"
-box_out_fmt = "cosmo_{:06d}_run_{:d}_HOD_{:d}_run_{:d}.fits"
+box_out_fmt = "cosmo_{:06d}_run_{:d}_HOD_{{:d}}_run_{{:d}}.fits"
 if SAVE_BOX and not os.path.exists(box_out_dir):
     os.makedirs(box_out_dir)
 
 SAVE_CONE = True
 out_dir = f"/data2/suchen/CosmoGrid/{dirbase}/HOD_{zbin_name}_SGC/grid/"
-out_fmt = "cosmo_{:06d}_run_{:d}_HOD_{:d}_run_{:d}_{:s}.fits"
+out_fmt = "cosmo_{:06d}_run_{:d}_HOD_{{:d}}_run_{{:d}}_{:s}.fits"
 if SAVE_CONE and not os.path.exists(out_dir):
     os.makedirs(out_dir)
 
@@ -228,39 +227,154 @@ if ROT:
 ''' ================================================================================================================== '''
 
 
+def run_mock_galaxies(
+        hod_params_array:np.ndarray, hod_halocat:UserSuppliedHaloCatalog, 
+        cosmo_ccl:ccl.Cosmology,
+        indx_ini:int=0,
+        galcone_out_fmt=None,
+        galbox_out_fmt=None
+    ):
+    '''
+    hod_params_array should have the same length as model_param_names.
+    galcone_out_fmt and galbox_out_fmt should only contain two placeholders: one for hod index and one for (hod)rlz index.
+    '''
+    ### populate galaxies
+    ### first populate in box
+
+    assert hod_params_array.ndim == 2, "hod_params_array should have two dimensions: one for hod index and one for model parameters."
+
+    for ihod, each_hod_params in enumerate(hod_params_array):
+        #####################  DEBUG  ###################
+        logger.info("HOD {}".format(ihod))
+        ngal_mock, _ = get_ngal(
+            halo_mass=hod_halocat.halo_table["halo_mvir"].value, Lbox=Lbox, redshift=redshift,
+            model_lb=model, model_params_names=model_params_names, hod_param_vals=each_hod_params, 
+        )
+        print("="*40)
+        print(f"analytical ngal_mock: {ngal_mock*1e4:.3f} e-4")
+        print("="*40)
+        #################################################
+
+        model_params_dict = dict(zip(model_params_names, each_hod_params))
+
+        dict_of_gsamples = run_apply_hod(
+            hod_halo_cat=hod_halocat,
+            model_lb=model,
+            model_params_names=model_params_names,
+            model_params_dict=model_params_dict,
+            OmegaM=cosmo_ccl['Omega_c'] + cosmo_ccl['Omega_b'],
+            init_seed=init_seed,
+            num_seeds=num_seeds,
+            z_space=False,
+            Num_ptcl_requirement=Num_ptcl_requirement,
+            ngal_ref=ngal_ref,
+            indx=indx_ini*nhod_per_cosmo + ihod
+        )
+
+        for iseed, key in enumerate(dict_of_gsamples.keys()):
+            
+            ### get galaxy positions
+            x_c, y_c, z_c = dict_of_gsamples[key]["x"], dict_of_gsamples[key]["y"], dict_of_gsamples[key]["z"]
+            x_c = (x_c + Lbox) % Lbox
+            y_c = (y_c + Lbox) % Lbox
+            z_c = (z_c + Lbox) % Lbox
+            gal_pos = np.c_[x_c, y_c, z_c]
+            
+            ### get galaxy velocity
+            vx_c, vy_c, vz_c = dict_of_gsamples[key]["vx"], dict_of_gsamples[key]["vy"], dict_of_gsamples[key]["vz"]
+            gal_vel = np.c_[vx_c, vy_c, vz_c]
+            gal_type = dict_of_gsamples[key]["gal_type"]
+            gal_host_halo_mvir = dict_of_gsamples[key]["halo_mvir"]
+
+            ### if needed, save box mock to file
+            if galbox_out_fmt is not None:
+                galbox_fname = galbox_out_fmt.format(ihod, iseed)
+                # np.save(galbox_fname, np.c_[gal_pos, gal_vel, gal_type, gal_host_halo_mvir])
+                tmp_tb = Table()
+                tmp_tb['x'] = gal_pos[:,0]
+                tmp_tb['y'] = gal_pos[:,1]
+                tmp_tb['z'] = gal_pos[:,2]
+                tmp_tb['gal_type'] = gal_type
+                tmp_tb['halo_mvir'] = gal_host_halo_mvir
+                tmp_tb.write(galbox_fname, overwrite=True)
+                del tmp_tb
+            
+            ### box to lightcone
+            galcone_output = run_box_to_lightcone(
+                gal_pos = gal_pos,
+                cosmo_ccl = cosmo_ccl,
+                Lbox = Lbox,
+                zmin = zmin,
+                zmax = zmax,
+                add_rsd = ADD_RSD,
+                gal_adj_props={
+                    'gal_vel': gal_vel,
+                    'gal_type': gal_type,
+                    'gal_host_halo_mvir': gal_host_halo_mvir
+                }
+            )
+
+            ### survey geometry and mask
+            if not ROT:
+                galcone_output = run_apply_geometry(
+                    galcone_output,
+                    survey_part_names=survey_part_names,
+                    masks=masks,
+                    nofz_info=nofz_info,
+                    nofz_method=nofz_method,
+                    add_rsd=ADD_RSD
+                )
+            else:
+                raise NotImplementedError
+            
+            ### if needed, save lightcone mock to file
+            if galcone_out_fmt is not None:
+                # gal_fname = os.path.join(out_dir, out_fmt.format(cosmo_label, rlz_label, ihod, iseed, survey_specify))
+                gal_fname = galcone_out_fmt.format(ihod, iseed)
+                # np.save(gal_fname, galcone_output)
+                tmp_tb = Table(galcone_output)
+                tmp_tb.write(gal_fname, overwrite=True)
+                del tmp_tb
+    
+def process_cosmo_hod_params(cosmo_label, cosmo_ccl, hod_halocat, cosmo_hod_dict_tot):
+    ### save cosmo par in cosmo_hod_dict
+    cosmo_hod_dict_tot['cosmo{:06d}'.format(cosmo_label)] = {}
+    cosmo_hod_dict_tot['cosmo{:06d}'.format(cosmo_label)]['cpar'] = {
+        "Om": cosmo_ccl['Omega_c'] + cosmo_ccl['Omega_b'],
+        "Ob": cosmo_ccl['Omega_b'],
+        "H0" : cosmo_ccl['h']*100,
+        "ns": cosmo_ccl['n_s'],
+        "s8": cosmo_ccl['sigma8'],
+        "w0": cosmo_ccl['w0']
+    }
+
+    ### find HOD params
+
+    hod_params_alive = run_find_hod_params(
+        hod_cat=hod_halocat, 
+        nhod_per_cosmo=nhod_per_cosmo,
+        model_lb=model,
+        model_params_names=model_params_names,
+        param_prior_low=param_prior_low,
+        param_prior_high=param_prior_high,
+        ngal_ref=ngal_ref,
+        seed_offset=cosmo_label
+    )
+
+    ### save HOD par in cosmo_hod_dict
+    if len(hod_params_alive) == nhod_per_cosmo:
+        for i in range(nhod_per_cosmo):
+            cosmo_hod_dict_tot['cosmo{:06d}'.format(cosmo_label)]['HOD{:d}'.format(i)] = hod_params_alive[i]
+
+    return hod_params_alive, cosmo_hod_dict_tot
+
 def main(cosmo_label, cosmo_ccl, hod_halocat, cosmo_hod_dict_tot):
     ### run finding HOD params for this cosmo
     if not LOAD_HOD_PAR:
-        ### save cosmo par in cosmo_hod_dict
-        cosmo_hod_dict_tot['cosmo{:06d}'.format(cosmo_label)] = {}
-        cosmo_hod_dict_tot['cosmo{:06d}'.format(cosmo_label)]['cpar'] = {
-            "Om": cosmo_ccl['Omega_c'] + cosmo_ccl['Omega_b'],
-            "Ob": cosmo_ccl['Omega_b'],
-            "H0" : cosmo_ccl['h']*100,
-            "ns": cosmo_ccl['n_s'],
-            "s8": cosmo_ccl['sigma8'],
-            "w0": cosmo_ccl['w0']
-        }
 
-        ### find HOD params
+        logger.info("Processing Cosmo - HOD parameters")
 
-        logger.info("Start finding HOD parameters")
-
-        hod_params_alive = run_find_hod_params(
-            hod_cat=hod_halocat, 
-            nhod_per_cosmo=nhod_per_cosmo,
-            model_lb=model,
-            model_params_names=model_params_names,
-            param_prior_low=param_prior_low,
-            param_prior_high=param_prior_high,
-            ngal_ref=ngal_ref,
-            seed_offset=cosmo_label
-        )
-
-        ### save HOD par in cosmo_hod_dict
-        if len(hod_params_alive) == nhod_per_cosmo:
-            for i in range(nhod_per_cosmo):
-                cosmo_hod_dict_tot['cosmo{:06d}'.format(cosmo_label)]['HOD{:d}'.format(i)] = hod_params_alive[i]
+        hod_params_alive, cosmo_hod_dict_tot = process_cosmo_hod_params(cosmo_label, cosmo_ccl, hod_halocat, cosmo_hod_dict_tot)
 
     ### pick HOD params corresponding to this cosmo
     else:
@@ -276,103 +390,29 @@ def main(cosmo_label, cosmo_ccl, hod_halocat, cosmo_hod_dict_tot):
     
     if POPULATE:
 
-        logger.info("Populating galaxy catalogs")
+        logger.info("Constructing mock galaxy catalogs")
 
-        ### populate galaxies
-        ### first populate in box
-        for ihod, each_hod_params in enumerate(hod_params_alive):
-            #####################  DEBUG  ###################
-            logger.info("HOD {}".format(ihod))
-            ngal_mock, _ = get_ngal(
-                halo_mass=hod_halocat.halo_table["halo_mvir"].value, Lbox=Lbox, redshift=redshift,
-                model_lb=model, model_params_names=model_params_names, hod_param_vals=each_hod_params, 
-            )
-            print("="*40)
-            print(f"analytical ngal_mock: {ngal_mock*1e4:.3f} e-4")
-            print("="*40)
-            #################################################
+        if not SAVE_CONE:
+            galcone_out_fmt = os.path.join(out_dir, out_fmt.format(cosmo_label, rlz_label, survey_specify))
+        else:
+            galcone_out_fmt = None
+        
+        if not SAVE_BOX:
+            galbox_out_fmt = os.path.join(box_out_dir, box_out_fmt.format(cosmo_label, rlz_label))
+        else:
+            galbox_out_fmt = None
 
-            model_params_dict = dict(zip(model_params_names, each_hod_params))
-
-            dict_of_gsamples = run_apply_hod(
-                hod_halo_cat=hod_halocat,
-                model_lb=model,
-                model_params_names=model_params_names,
-                model_params_dict=model_params_dict,
-                OmegaM=cosmo_ccl['Omega_c'] + cosmo_ccl['Omega_b'],
-                init_seed=init_seed,
-                num_seeds=num_seeds,
-                z_space=z_space,
-                Num_ptcl_requirement=Num_ptcl_requirement,
-                ngal_ref=ngal_ref,
-                indx=cosmo_label*ihod
-            )
-
-            for iseed, key in enumerate(dict_of_gsamples.keys()):
-                
-                ### get galaxy positions
-                x_c, y_c, z_c = dict_of_gsamples[key]["x"], dict_of_gsamples[key]["y"], dict_of_gsamples[key]["z"]
-                x_c = (x_c + Lbox) % Lbox
-                y_c = (y_c + Lbox) % Lbox
-                z_c = (z_c + Lbox) % Lbox
-                gal_pos = np.c_[x_c, y_c, z_c]
-                
-                ### get galaxy velocity
-                vx_c, vy_c, vz_c = dict_of_gsamples[key]["vx"], dict_of_gsamples[key]["vy"], dict_of_gsamples[key]["vz"]
-                gal_vel = np.c_[vx_c, vy_c, vz_c]
-                gal_type = dict_of_gsamples[key]["gal_type"]
-                gal_host_halo_mvir = dict_of_gsamples[key]["halo_mvir"]
-
-                ### save to file if necessary
-                if SAVE_BOX:
-                    galbox_fname = os.path.join(box_out_dir, box_out_fmt.format(cosmo_label, rlz_label, ihod, iseed))
-                    # np.save(galbox_fname, np.c_[gal_pos, gal_vel, gal_type, gal_host_halo_mvir])
-                    tmp_tb = Table()
-                    tmp_tb['x'] = gal_pos[:,0]
-                    tmp_tb['y'] = gal_pos[:,1]
-                    tmp_tb['z'] = gal_pos[:,2]
-                    tmp_tb['gal_type'] = gal_type
-                    tmp_tb['halo_mvir'] = gal_host_halo_mvir
-                    tmp_tb.write(galbox_fname, overwrite=True)
-                    del tmp_tb
-                
-                ### box to lightcone
-                galcone_output = run_box_to_lightcone(
-                    gal_pos = gal_pos,
-                    cosmo_ccl = cosmo_ccl,
-                    Lbox = Lbox,
-                    zmin = zmin,
-                    zmax = zmax,
-                    add_rsd = ADD_RSD,
-                    gal_adj_props={
-                        'gal_vel': gal_vel,
-                        'gal_type': gal_type,
-                        'gal_host_halo_mvir': gal_host_halo_mvir
-                    }
-                )
-
-                ### survey geometry and mask
-                if not ROT:
-                    galcone_output = run_apply_geometry(
-                        galcone_output,
-                        survey_part_names=survey_part_names,
-                        masks=masks,
-                        nofz_info=nofz_info,
-                        nofz_method=nofz_method,
-                        add_rsd=ADD_RSD
-                    )
-                else:
-                    raise NotImplementedError
-                
-                ### save to file
-                if SAVE_CONE:
-                    gal_fname = os.path.join(out_dir, out_fmt.format(cosmo_label, rlz_label, ihod, iseed, survey_specify))
-                    # np.save(gal_fname, galcone_output)
-                    tmp_tb = Table(galcone_output)
-                    tmp_tb.write(gal_fname, overwrite=True)
-                    del tmp_tb
+        run_mock_galaxies(
+            hod_params_array=hod_params_alive,
+            hod_halocat=hod_halocat,
+            cosmo_ccl=cosmo_ccl,
+            indx_ini=cosmo_label,
+            galcone_out_fmt=galcone_out_fmt,
+            galbox_out_fmt=galbox_out_fmt
+        )
 
     return cosmo_hod_dict_tot
+
 
 ''' ================================================================================================================== '''
 
@@ -414,22 +454,18 @@ if __name__ == "__main__":
     # ====================================================================================================
 
     ### specify output directory
-    hod_param_out = f"{wdir}/cfgs/hod/hod_5params_dict_const_ngal_{zbin_name}_fiducial.json"
+    hod_param_out = f"{wdir}/cfgs/hod/hod_5params_dict_free_ngal_{zbin_name}_fiducial.json"
+    SAVE_BOX = False
     box_out_dir = f"/data2/suchen/CosmoGrid/{dirbase}/HOD_{zbin_name}_box/fiducial/"
-    box_out_fmt = "cosmo_{:06d}_run_{:d}_HOD_{:d}_run_{:d}.npy"
+    box_out_fmt = "cosmo_{:06d}_run_{:d}_HOD_{{:d}}_run_{{:d}}.fits"
 
+    SAVE_CONE = True
     out_dir = f"/data2/suchen/CosmoGrid/{dirbase}/HOD_{zbin_name}/fiducial/"
-    out_fmt = "cosmo_{:06d}_run_{:d}_HOD_{:d}_run_{:d}_{:s}.npy"
+    out_fmt = "fiducial_run_0_HOD_{{:d}}_run_{{:d}}_{:s}.fits"
 
     if not os.path.isdir(out_dir):
         logger.info(f"Create dictionary: {out_dir}")
         os.makedirs(out_dir)
-
-    ### Initialize cosmo_hod dict
-    cosmo_hod_dict_tot = initial_hod_param_dict(load_hod_par=LOAD_HOD_PAR, hod_param_file=hod_param_out)
-
-    ### For fiducial cosmology, we assure cosmo_label = 0
-    cosmo_label = 0
 
     ### specify cosmo par file name & halo file name
     cpar_fname = "/data3/suchen/CosmoGridV1/fid/run_0000/params.yml"
@@ -441,15 +477,17 @@ if __name__ == "__main__":
     ### load halo catalog for HOD 
     hod_halocat = load_halocat(cpar_fname, halo_fname, Lbox=Lbox, Nside=Nside, redshift=redshift, ofmt='hod')
 
-    cosmo_hod_dict_tot = main(
-        cosmo_label, 
-        cosmo_ccl, 
-        hod_halocat, 
-        cosmo_hod_dict_tot
-        )
-    
-    if not LOAD_HOD_PAR:
-        save_hod_param_dict([cosmo_hod_dict_tot], hod_param_out)
+    nhod_per_cosmo = 1
+    fid_hod_params_array = np.array([[13.2, 0.30, 15.0, 2.41, 0.34, 1.0]])
+
+    run_mock_galaxies(
+        hod_params_array=fid_hod_params_array,
+        hod_halocat=hod_halocat,
+        cosmo_ccl = cosmo_ccl, 
+        indx_ini=0,
+        galcone_out_fmt = os.path.join(out_dir, out_fmt.format(survey_specify)),
+        galbox_out_fmt=None
+    )
 
     # ====================================================================================================
     # ========================               MULTI COSMOLOGY LOOP              ===========================
