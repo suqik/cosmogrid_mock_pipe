@@ -70,7 +70,7 @@ class ModelClass():
     print('STATUS: Constructing HOD model ...')
     if self.model == 0:
       cens_occ_model = MWCens(redshift=self.redshift)
-      sats_occ_model = MWSats(redshift=self.redshift)
+      sats_occ_model = MWSats(redshift=self.redshift, cenocc_model=cens_occ_model, modulate_with_cenocc=True)
     elif self.model == 1:
       cens_occ_model = ContrerasCens(redshift=self.redshift)
       sats_occ_model = ContrerasSats(redshift=self.redshift)
@@ -152,7 +152,7 @@ class ModelClass():
       print('SubSTATUS: Populate the halo catalog with galaxies using {} as seed...'.format(seed))
 
     # check rhalf columns has been read in 
-    print("Halo Table Columns:", halo_cat.halo_table.colnames)
+    # print("Halo Table Columns:", halo_cat.halo_table.colnames)
 
     self.model_instance.populate_mock(halo_cat, Num_ptcl_requirement=self.Num_ptcl_requirement, 
                                       seed=seed)
