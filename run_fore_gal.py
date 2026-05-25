@@ -4,6 +4,7 @@ apply HOD and make lightcone.
 '''
 
 import sys
+from astropy.table import Table
 import numpy as np
 import datetime
 from loguru import logger
@@ -48,11 +49,15 @@ elif redshift_label == 110:
     zmin = 0.45
     zmax = 0.6
     zbin_name = "cmass"
-    survey_part_names += ['boss_cmass']
-    survey_specify += "boss_north"
 
-    survey_part_names += ['2dflens_south']
-    survey_specify += "_2dflens_south"
+    # survey_part_names += ['boss_cmass']
+    # survey_specify += "boss_north"
+
+    # survey_part_names += ['2dflens_south']
+    # survey_specify += "_2dflens_south"
+
+    survey_part_names += ['boss_cmass_sgc']
+    survey_specify += "boss_south"
 
 print(survey_specify)
 
@@ -67,6 +72,7 @@ geom_fname_dict['boss_lowz'] = mask_boss_fdir + "mask_DR12v5_LOWZ_North.ply"
 geom_fname_dict['boss_lowze2'] = mask_boss_fdir + "mask_DR12v5_LOWZE2_North.ply"
 geom_fname_dict['boss_lowze3'] = mask_boss_fdir + "mask_DR12v5_LOWZE3_North.ply"
 geom_fname_dict['boss_cmass'] = mask_boss_fdir + "mask_DR12v5_CMASS_North.ply"
+geom_fname_dict['boss_cmass_sgc'] = mask_boss_fdir + "mask_DR12v5_CMASS_South.ply"
 
 ### mask files corresponding to observational effects
 mask_boss_fname_list = [
@@ -93,6 +99,7 @@ nz_fname_dict['boss_lowz'] = nz_fbase + "nbar_DR12v5_LOWZ_North_om0p31_Pfkp10000
 nz_fname_dict['boss_lowze2'] = nz_fbase + "nbar_DR12v5_LOWZE2_North_om0p31_Pfkp10000.dat"
 nz_fname_dict['boss_lowze3'] = nz_fbase + "nbar_DR12v5_LOWZE3_North_om0p31_Pfkp10000.dat"
 nz_fname_dict['boss_cmass'] = nz_fbase + "nbar_DR12v5_CMASS_North_om0p31_Pfkp10000.dat"
+nz_fname_dict['boss_cmass_sgc'] = nz_fbase + "nbar_DR12v5_CMASS_South_om0p31_Pfkp10000.dat"
 nz_fname_dict['2dflens_south'] = nz_fbase + "nbar_2dFLens_south_data.dat"
 
 ''' ================ 4. HOD setup ================ '''
@@ -117,10 +124,12 @@ z_space = False
 ngal_ref = 2.05e-4
 
 LOAD_HOD_PAR = False # if load exist hod params
+POPULATE = True # if populate galaxy
+
 if model == 2:
     # hod_param_out = f"{wdir}/cfgs/hod/hod_5params_dict_high_ngal_wcosmo2_ws8.json"    
     # hod_param_out = f"{wdir}/cfgs/hod/hod_5params_dict_Nsat1000_{zbin_name}.json"
-    hod_param_out = f"{wdir}/cfgs/hod/hod_5params_dict_const_ngal_{zbin_name}.json"
+    hod_param_out = f"{wdir}/cfgs/hod/hod_5params_dict_free_ngal_{zbin_name}.json"
 
 if model == 4:
     raise NotImplementedError
@@ -170,7 +179,7 @@ if VARY_HOD:
 
 ''' ================ 6. Catalog output files ================ '''
 
-dirbase = "CNGAL"
+dirbase = "Free_NGAL"
 if ADD_RSD:
     dirbase += "_wrsd"
 
@@ -179,11 +188,15 @@ if model == 4:
 
 SAVE_BOX = False
 box_out_dir = f"/data2/suchen/CosmoGrid/{dirbase}/HOD_{zbin_name}_box/grid/"
-box_out_fmt = "cosmo_{:06d}_run_{:d}_HOD_{:d}_run_{:d}.npy"
+box_out_fmt = "cosmo_{:06d}_run_{:d}_HOD_{:d}_run_{:d}.fits"
+if SAVE_BOX and not os.path.exists(box_out_dir):
+    os.makedirs(box_out_dir)
 
 SAVE_CONE = True
-out_dir = f"/data2/suchen/CosmoGrid/{dirbase}/HOD_{zbin_name}/grid/"
-out_fmt = "cosmo_{:06d}_run_{:d}_HOD_{:d}_run_{:d}_{:s}.npy"
+out_dir = f"/data2/suchen/CosmoGrid/{dirbase}/HOD_{zbin_name}_SGC/grid/"
+out_fmt = "cosmo_{:06d}_run_{:d}_HOD_{:d}_run_{:d}_{:s}.fits"
+if SAVE_CONE and not os.path.exists(out_dir):
+    os.makedirs(out_dir)
 
 ''' ================ 7. Show config info ================ '''
 
@@ -204,6 +217,8 @@ if VARY_HOD:
         logger.info(f"HOD prior low: {param_prior_low}")
         logger.info(f"HOD prior high: {param_prior_high}")
         logger.info(f"Will save cosmo and HOD pars to: {hod_param_out}")
+    if not POPULATE:
+        logger.info("Do not populate galaxy catalogs. Only find HOD parameters")
 
 if ROT:
     logger.info("Use rotation mode")
@@ -228,6 +243,9 @@ def main(cosmo_label, cosmo_ccl, hod_halocat, cosmo_hod_dict_tot):
         }
 
         ### find HOD params
+
+        logger.info("Start finding HOD parameters")
+
         hod_params_alive = run_find_hod_params(
             hod_cat=hod_halocat, 
             nhod_per_cosmo=nhod_per_cosmo,
@@ -252,13 +270,20 @@ def main(cosmo_label, cosmo_ccl, hod_halocat, cosmo_hod_dict_tot):
         else:
             hod_params_alive = []
 
-    ### populate galaxies
-    if len(hod_params_alive) != 0:
+    
+    if len(hod_params_alive) == 0:
+        return hod_params_alive
+    
+    if POPULATE:
+
+        logger.info("Populating galaxy catalogs")
+
+        ### populate galaxies
         ### first populate in box
         for ihod, each_hod_params in enumerate(hod_params_alive):
             #####################  DEBUG  ###################
             logger.info("HOD {}".format(ihod))
-            ngal_mock, Nsat = get_ngal(
+            ngal_mock, _ = get_ngal(
                 halo_mass=hod_halocat.halo_table["halo_mvir"].value, Lbox=Lbox, redshift=redshift,
                 model_lb=model, model_params_names=model_params_names, hod_param_vals=each_hod_params, 
             )
@@ -268,6 +293,7 @@ def main(cosmo_label, cosmo_ccl, hod_halocat, cosmo_hod_dict_tot):
             #################################################
 
             model_params_dict = dict(zip(model_params_names, each_hod_params))
+
             dict_of_gsamples = run_apply_hod(
                 hod_halo_cat=hod_halocat,
                 model_lb=model,
@@ -300,7 +326,15 @@ def main(cosmo_label, cosmo_ccl, hod_halocat, cosmo_hod_dict_tot):
                 ### save to file if necessary
                 if SAVE_BOX:
                     galbox_fname = os.path.join(box_out_dir, box_out_fmt.format(cosmo_label, rlz_label, ihod, iseed))
-                    np.save(galbox_fname, np.c_[gal_pos, gal_vel, gal_type, gal_host_halo_mvir])
+                    # np.save(galbox_fname, np.c_[gal_pos, gal_vel, gal_type, gal_host_halo_mvir])
+                    tmp_tb = Table()
+                    tmp_tb['x'] = gal_pos[:,0]
+                    tmp_tb['y'] = gal_pos[:,1]
+                    tmp_tb['z'] = gal_pos[:,2]
+                    tmp_tb['gal_type'] = gal_type
+                    tmp_tb['halo_mvir'] = gal_host_halo_mvir
+                    tmp_tb.write(galbox_fname, overwrite=True)
+                    del tmp_tb
                 
                 ### box to lightcone
                 galcone_output = run_box_to_lightcone(
@@ -333,9 +367,10 @@ def main(cosmo_label, cosmo_ccl, hod_halocat, cosmo_hod_dict_tot):
                 ### save to file
                 if SAVE_CONE:
                     gal_fname = os.path.join(out_dir, out_fmt.format(cosmo_label, rlz_label, ihod, iseed, survey_specify))
-                    if TEST_MODE:
-                        gal_fname = "tmp/cosmo{:06d}_hod{:d}_test.npy".format(cosmo_label, ihod)
-                    np.save(gal_fname, galcone_output)
+                    # np.save(gal_fname, galcone_output)
+                    tmp_tb = Table(galcone_output)
+                    tmp_tb.write(gal_fname, overwrite=True)
+                    del tmp_tb
 
     return cosmo_hod_dict_tot
 
@@ -378,111 +413,111 @@ if __name__ == "__main__":
     # ========================               SINGLE COSMOLOGY LOOP              ==========================
     # ====================================================================================================
 
-    # ### specify output directory
-    # hod_param_out = f"{wdir}/cfgs/hod/hod_5params_dict_const_ngal_{zbin_name}_fiducial.json"
-    # box_out_dir = f"/data2/suchen/CosmoGrid/{dirbase}/HOD_{zbin_name}_box/fiducial/"
-    # box_out_fmt = "cosmo_{:06d}_run_{:d}_HOD_{:d}_run_{:d}.npy"
+    ### specify output directory
+    hod_param_out = f"{wdir}/cfgs/hod/hod_5params_dict_const_ngal_{zbin_name}_fiducial.json"
+    box_out_dir = f"/data2/suchen/CosmoGrid/{dirbase}/HOD_{zbin_name}_box/fiducial/"
+    box_out_fmt = "cosmo_{:06d}_run_{:d}_HOD_{:d}_run_{:d}.npy"
 
-    # out_dir = f"/data2/suchen/CosmoGrid/{dirbase}/HOD_{zbin_name}/fiducial/"
-    # out_fmt = "cosmo_{:06d}_run_{:d}_HOD_{:d}_run_{:d}_{:s}.npy"
+    out_dir = f"/data2/suchen/CosmoGrid/{dirbase}/HOD_{zbin_name}/fiducial/"
+    out_fmt = "cosmo_{:06d}_run_{:d}_HOD_{:d}_run_{:d}_{:s}.npy"
 
-    # if not os.path.isdir(out_dir):
-    #     logger.info(f"Create dictionary: {out_dir}")
-    #     os.makedirs(out_dir)
+    if not os.path.isdir(out_dir):
+        logger.info(f"Create dictionary: {out_dir}")
+        os.makedirs(out_dir)
 
-    # ### Initialize cosmo_hod dict
-    # cosmo_hod_dict_tot = initial_hod_param_dict(load_hod_par=LOAD_HOD_PAR, hod_param_file=hod_param_out)
+    ### Initialize cosmo_hod dict
+    cosmo_hod_dict_tot = initial_hod_param_dict(load_hod_par=LOAD_HOD_PAR, hod_param_file=hod_param_out)
 
-    # ### For fiducial cosmology, we assure cosmo_label = 0
-    # cosmo_label = 0
+    ### For fiducial cosmology, we assure cosmo_label = 0
+    cosmo_label = 0
 
-    # ### specify cosmo par file name & halo file name
-    # cpar_fname = "/data3/suchen/CosmoGridV1/fid/run_0000/params.yml"
-    # halo_fname = "/data3/suchen/CosmoGridV1/fid/run_0000/pkd_halos/CosmoML.{:05d}.fofstats.0".format(redshift_label)
+    ### specify cosmo par file name & halo file name
+    cpar_fname = "/data3/suchen/CosmoGridV1/fid/run_0000/params.yml"
+    halo_fname = "/data3/suchen/CosmoGridV1/fid/run_0000/pkd_halos/CosmoML.{:05d}.fofstats.0".format(redshift_label)
 
-    # ### initialize cosmology
-    # cosmo_ccl = get_cosmo_from_file(cpar_fname, otype="ccl")
+    ### initialize cosmology
+    cosmo_ccl = get_cosmo_from_file(cpar_fname, otype="ccl")
 
-    # ### load halo catalog for HOD 
-    # hod_halocat = load_halocat(cpar_fname, halo_fname, Lbox=Lbox, Nside=Nside, redshift=redshift, ofmt='hod')
+    ### load halo catalog for HOD 
+    hod_halocat = load_halocat(cpar_fname, halo_fname, Lbox=Lbox, Nside=Nside, redshift=redshift, ofmt='hod')
 
-    # cosmo_hod_dict_tot = main(
-    #     cosmo_label, 
-    #     cosmo_ccl, 
-    #     hod_halocat, 
-    #     cosmo_hod_dict_tot
-    #     )
+    cosmo_hod_dict_tot = main(
+        cosmo_label, 
+        cosmo_ccl, 
+        hod_halocat, 
+        cosmo_hod_dict_tot
+        )
     
-    # if not LOAD_HOD_PAR:
-    #     save_hod_param_dict([cosmo_hod_dict_tot], hod_param_out)
+    if not LOAD_HOD_PAR:
+        save_hod_param_dict([cosmo_hod_dict_tot], hod_param_out)
 
     # ====================================================================================================
     # ========================               MULTI COSMOLOGY LOOP              ===========================
     # ====================================================================================================
 
-    if rank == 0:
+    # if rank == 0:
         
-        logger.info("Read cosmo labels")
+    #     logger.info("Read cosmo labels")
 
-        cosmo_labels_tot = get_cosmo_name_list_original("/data3/suchen/CosmoGridV1/grid/dirnames.txt")
-        ######## For Test #######
-        if TEST_MODE:
-            cosmo_labels_tot = [172798]
-        #########################
-        k, m = divmod(len(cosmo_labels_tot), size)
-        chunks = [cosmo_labels_tot[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] for i in range(size)]
+    #     cosmo_labels_tot = get_cosmo_name_list_original("/data3/suchen/CosmoGridV1/grid/dirnames.txt")
+    #     ######## For Test #######
+    #     if TEST_MODE:
+    #         cosmo_labels_tot = [172798]
+    #     #########################
+    #     k, m = divmod(len(cosmo_labels_tot), size)
+    #     chunks = [cosmo_labels_tot[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] for i in range(size)]
 
-        if not os.path.isdir(out_dir):
-            logger.info(f"Create dictionary: {out_dir}")
-            os.makedirs(out_dir)
-    else:
-        chunks = None
+    #     if not os.path.isdir(out_dir):
+    #         logger.info(f"Create dictionary: {out_dir}")
+    #         os.makedirs(out_dir)
+    # else:
+    #     chunks = None
 
-    if rank == 0:
+    # if rank == 0:
 
-        logger.info("Scattering labels")
+    #     logger.info("Scattering labels")
 
-    cosmo_labels = comm.scatter(chunks, root=0)
+    # cosmo_labels = comm.scatter(chunks, root=0)
 
-    start = datetime.datetime.now()
-
-
-    logger.info("Main process.")
+    # start = datetime.datetime.now()
 
 
-    cosmo_hod_dict_tot = initial_hod_param_dict(load_hod_par=LOAD_HOD_PAR, hod_param_file=hod_param_out)
+    # logger.info("Main process.")
 
-    ### Loop from cosmo_labels
-    for cosmo_label in cosmo_labels:
 
-        logger.info(f"Start processing cosmo_label {cosmo_label}")
+    # cosmo_hod_dict_tot = initial_hod_param_dict(load_hod_par=LOAD_HOD_PAR, hod_param_file=hod_param_out)
 
-        ### specify cosmo par file name & halo file name
-        cpar_fname = os.path.join(sim_fmt.format(cosmo_label, rlz_label), "params.yml")
-        halo_fname = os.path.join(sim_fmt.format(cosmo_label, rlz_label), halo_fmt.format(redshift_label))
+    # ### Loop from cosmo_labels
+    # for cosmo_label in cosmo_labels:
 
-        ### initialize cosmology
-        cosmo_ccl = get_cosmo_from_file(cpar_fname, otype="ccl")
+    #     logger.info(f"Start processing cosmo_label {cosmo_label}")
 
-        ### load halo catalog for HOD 
-        hod_halocat = load_halocat(cpar_fname, halo_fname, Lbox=Lbox, Nside=Nside, redshift=redshift, ofmt='hod')
+    #     ### specify cosmo par file name & halo file name
+    #     cpar_fname = os.path.join(sim_fmt.format(cosmo_label, rlz_label), "params.yml")
+    #     halo_fname = os.path.join(sim_fmt.format(cosmo_label, rlz_label), halo_fmt.format(redshift_label))
 
-        cosmo_hod_dict_tot = main(
-            cosmo_label, 
-            cosmo_ccl, 
-            hod_halocat, 
-            cosmo_hod_dict_tot
-            )
+    #     ### initialize cosmology
+    #     cosmo_ccl = get_cosmo_from_file(cpar_fname, otype="ccl")
 
-    ### if this is the first run, save HOD params
-    if not LOAD_HOD_PAR:
-        all_cosmo_hod_dict = comm.gather(cosmo_hod_dict_tot, root=0)
+    #     ### load halo catalog for HOD 
+    #     hod_halocat = load_halocat(cpar_fname, halo_fname, Lbox=Lbox, Nside=Nside, redshift=redshift, ofmt='hod')
 
-        if rank == 0:
-            save_hod_param_dict(all_cosmo_hod_dict, hod_param_out)
+    #     cosmo_hod_dict_tot = main(
+    #         cosmo_label, 
+    #         cosmo_ccl, 
+    #         hod_halocat, 
+    #         cosmo_hod_dict_tot
+    #         )
 
-    end = datetime.datetime.now()
-    logger.info(f"Time elapsed: {end-start}")
+    # ### if this is the first run, save HOD params
+    # if not LOAD_HOD_PAR:
+    #     all_cosmo_hod_dict = comm.gather(cosmo_hod_dict_tot, root=0)
+
+    #     if rank == 0:
+    #         save_hod_param_dict(all_cosmo_hod_dict, hod_param_out)
+
+    # end = datetime.datetime.now()
+    # logger.info(f"Time elapsed: {end-start}")
 
     # ====================================================================================================
 
