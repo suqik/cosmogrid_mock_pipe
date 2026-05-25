@@ -14,9 +14,8 @@ from halotools.sim_manager import UserSuppliedHaloCatalog
 
 # >>>========   Define constants   =========<<<
 
-Gconst = 4.3009*1e-3 # Mpc/Msun*(km/s)^2
-sol = 2.99792458*1e5 # km/s
-rhoc0 = 3*100**2/(8*np.pi*Gconst)*sol
+Gconst = 4.3009*1e-9 # Mpc/Msun*(km/s)^2
+rhoc0 = 3*100**2/(8*np.pi*Gconst)
 
 # >>>=======================================<<<
 
@@ -27,7 +26,7 @@ pkd_halo_dtype = np.dtype([
     ("minPot", "f4"),
     ("rcen", ("f4", 3)),
     ("rcom", ("f4", 3)),
-    ("vcom", ("f4", 3)), # this is a typo, should be vcom (velocity)
+    ("vcom", ("f4", 3)), 
     ("angular", ("f4", 3)),
     ("inertia", ("f4", 6)),
     ("sigma", "f4"),
@@ -80,6 +79,7 @@ bgal_type = np.dtype(
 
 ### matched foreground catalog
 ### survey label: 0 for LOWZ, 1 for LOWZE2, 2 for LOWZE3, 3 for 2dFLenS, 4 for CMASS
+### gal_type: 1 for central, 0 for satellite
 fgal_type = np.dtype(
     [
         ("ra", "f4"), 
@@ -87,7 +87,9 @@ fgal_type = np.dtype(
         ("z", "f4"),
         ("zrsd", "f4"), 
         ("w", "f4"),
-        ("survey", "i4")
+        ("survey", "i4"),
+        ("gal_type", "i4"),
+        ("host_halo_mvir", "f4")
     ]
 )
 
@@ -214,6 +216,44 @@ def get_hod_params(fname:str, otype:str='dict') -> Union[dict, np.ndarray]:
     else:
         raise ValueError(f"Output type {otype} not implemented!")
 
+def get_cosmo_from_json(fname:str, nhod=None):
+
+    '''
+    Load cosmo parameters from COSMO-HOD json file.
+    '''
+
+    with open(fname, "r") as f:
+        cosmo_tot_dict = json.load(f)
+
+    cosmo_labels = []
+    cosmo_params = []
+    if nhod is not None:
+        for icosmo_str in cosmo_tot_dict.keys():
+                if len(cosmo_tot_dict[icosmo_str]) == nhod:
+                    cosmo_params.append([
+                        cosmo_tot_dict[icosmo_str]['cpar']['Om'],
+                        cosmo_tot_dict[icosmo_str]['cpar']['Ob'],
+                        cosmo_tot_dict[icosmo_str]['cpar']['H0'],
+                        cosmo_tot_dict[icosmo_str]['cpar']['ns'],
+                        cosmo_tot_dict[icosmo_str]['cpar']['s8'],
+                        cosmo_tot_dict[icosmo_str]['cpar']['w0'],
+                    ])
+                    cosmo_labels.append(int(icosmo_str[5:]))
+                else:
+                    continue
+    else:
+        for icosmo_str in cosmo_tot_dict.keys():
+            cosmo_params.append([
+                cosmo_tot_dict[icosmo_str]['cpar']['Om'],
+                cosmo_tot_dict[icosmo_str]['cpar']['Ob'],
+                cosmo_tot_dict[icosmo_str]['cpar']['H0'],
+                cosmo_tot_dict[icosmo_str]['cpar']['ns'],
+                cosmo_tot_dict[icosmo_str]['cpar']['s8'],
+                cosmo_tot_dict[icosmo_str]['cpar']['w0'],
+            ])
+            cosmo_labels.append(int(icosmo_str[5:]))
+
+    return cosmo_params, cosmo_labels
 
 def get_pkd_halo_attrs(fname:str, attrs:Union[str,list]=["pos", "mass"], Lbox:float=None, redshift:float=None) -> dict:
     '''
@@ -264,7 +304,8 @@ def get_pkd_halo_attrs(fname:str, attrs:Union[str,list]=["pos", "mass"], Lbox:fl
                 raise ValueError("Calculate mass needs boxsize as input!")
         elif iattr == "vel":
             if Lbox is not None and redshift is not None:
-                vel_fac = 100*Lbox*np.sqrt(3./(8*np.pi))*(1+redshift)
+                vel_fac = 100*Lbox*np.sqrt(3./(8*np.pi))/(1+redshift)
+                # vel_fac = np.sqrt(8*np.pi/3) / (100 * Lbox) * (1+redshift)
                 vel = halo["vcom"]*vel_fac
                 # outputs.append(vel)
                 outputs["vel"] = vel
