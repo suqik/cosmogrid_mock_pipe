@@ -122,7 +122,7 @@ def cut_shell_one_box(pos:np.ndarray, gid:np.ndarray,
                       boxsize:float, 
                       shift:Union[tuple,list,np.ndarray], 
                       rmin:float, rmax:float,
-                      other_prop:np.ndarray=None
+                      other_props:list=None
                       ) -> Union[np.ndarray, tuple]:
     '''
     Cut out a shell within a given range from the coordinates.
@@ -141,7 +141,7 @@ def cut_shell_one_box(pos:np.ndarray, gid:np.ndarray,
         The minimum radius of the shell.
     rmax: float
         The maximum radius of the shell.
-    other_prop: [Optional] np.ndarray
+    other_props: [Optional] list of np.ndarray
         Other properties to be transform simutaneously.
         Default is None.
 
@@ -160,9 +160,14 @@ def cut_shell_one_box(pos:np.ndarray, gid:np.ndarray,
     local_pos = local_pos[cut]
     local_gid = gid[cut]
 
-    if other_prop is not None:
-        local_prop = other_prop[cut]
-        return np.c_[local_pos, local_gid], local_prop
+    if other_props is not None:
+        local_props = []
+        if not isinstance(other_props, list):
+            raise ValueError("`other_props` should be a list of np.ndarray!")
+        for iprop in other_props:
+            local_props.append(iprop[cut])
+
+        return np.c_[local_pos, local_gid], local_props
 
     else:
         return np.c_[local_pos, local_gid]
@@ -228,7 +233,7 @@ def make_lightcone_tiles(
         position:np.ndarray, boxsize:float, 
         chi_min:float, chi_max:float, 
         ctr:Union[tuple,list,np.ndarray,int]=[0,0,0],
-        other_prop:np.ndarray=None) -> Union[np.ndarray, tuple]:
+        other_props:list=None) -> Union[np.ndarray, tuple]:
     '''
     Make a lightcone from the given coordinates.
 
@@ -245,7 +250,7 @@ def make_lightcone_tiles(
     ctr: tuple or list or np.ndarray or int
         The center of the box. Default is (0,0,0).
         If is int, will be broadcast to three dimensions.
-    other_prop: [Optional] np.ndarray
+    other_props: [Optional] list of np.ndarray
         Other properties of the galaxy, for example velocities.
         Default is None.
 
@@ -256,10 +261,15 @@ def make_lightcone_tiles(
     lightcone_prop: np.ndarray
         Other properties of particles in the lightcone.
     '''
-    if other_prop is not None:
-        if other_prop.shape[0] != position.shape[0]:
-            raise ValueError(f"The shape of the position ({position.shape[0]}) and the property ({other_prop.shape[0]}) do not match!")
+    if other_props is not None:
+        if not isinstance(other_props, list) and isinstance(other_props, np.ndarray):
+            other_props = [other_props]
+        for iprop, other_prop in enumerate(other_props):
+            if other_prop.shape[0] != position.shape[0]:
+                raise ValueError(f"The shape of the position ({position.shape[0]}) and the {iprop}-th property ({other_prop.shape[0]}) do not match!")
     
+    num_props = len(other_props)
+
     if type(ctr) is int:
         ctr = [ctr]*3
     shift_list = get_cross_box_indice(boxsize, chi_min, chi_max)
@@ -267,18 +277,28 @@ def make_lightcone_tiles(
     gid = np.arange(len(position)) # Global ID of each tracer, start from 0
     
     lightcone = []
+    
+    if other_props is not None:
+        tmp_lightcone_props = {}
+        for iprop in range(num_props):
+            tmp_lightcone_props[f"prop{iprop}"] = []
 
-    if other_prop is not None:
-        lightcone_prop = []
         for idx in range(len(shift_list)):
-            tmp_pos_id, tmp_prop = cut_shell_one_box(pos_rectr, gid, boxsize, shift_list[idx], chi_min, chi_max, other_prop=other_prop)
+            tmp_pos_id, tmp_prop = cut_shell_one_box(pos_rectr, gid, boxsize, shift_list[idx], chi_min, chi_max, other_props=other_props)
             lightcone.append(tmp_pos_id)
-            lightcone_prop.append(tmp_prop)
+            for iprop in range(num_props):
+                tmp_lightcone_props[f"prop{iprop}"].append(tmp_prop[iprop])
+                # print(f"tmp_lightcone_props[{iprop}] appended shape {tmp_prop[iprop].shape}. Current len: {len(tmp_lightcone_props[f"prop{iprop}"])}")
         
         lightcone = np.vstack(lightcone)
-        lightcone_prop = np.vstack(lightcone_prop)
+        lightcone_props = []
 
-        return lightcone, lightcone_prop
+        for iprop in range(num_props):
+            # print(tmp_lightcone_props[f"prop{iprop}"][0].shape, tmp_lightcone_props[f"prop{iprop}"][1].shape)
+            lightcone_props.append(np.concatenate(tmp_lightcone_props[f"prop{iprop}"]))
+        # lightcone_prop = np.vstack(lightcone_prop)
+
+        return lightcone, lightcone_props
 
     else:   
         for idx in range(len(shift_list)):
@@ -334,7 +354,7 @@ def cat2shell(nside:int, **kwargs):
 
     return shell
 
-def rotate_lightcone(galcone, rot_degrees, inv=False):
+def rotate_lightcone(galcone, rot_degrees, inv=False, icoord='radec'):
     '''
     Apply rotation on lightcone particles.
 
@@ -346,6 +366,9 @@ def rotate_lightcone(galcone, rot_degrees, inv=False):
         The rotation angle in degrees.
     inv: bool
         Whether to apply the inverse rotation. Default is True.
+    icoord: str
+        The coordinate system of the input lightcone. 
+        Can be `vec` or `radec`. Default is 'radec'.
 
     Returns:
     -------
@@ -353,10 +376,28 @@ def rotate_lightcone(galcone, rot_degrees, inv=False):
         The rotated lightcone particles in (x,y,z).
     '''
 
+    if icoord != 'vec' and icoord != 'radec':
+        raise ValueError("icoord should be either 'vec' or 'radec'!")
+
     r = R.from_euler('zyx', rot_degrees, degrees=True)
     if inv:
         r = r.inv()
-    galcone_rot = r.apply(galcone)
+    
+    if icoord == 'vec':
+        galcone_rot = r.apply(galcone)
+    if icoord == 'radec':
+        galcone_rot = galcone.copy()
+        galcone_rot['ra'] , galcone_rot['dec'] = hp.rotator.rotateDirection(
+            rotmat=r.as_matrix(),
+            theta=galcone['ra'],
+            phi=galcone['dec'],
+            lonlat=True
+        )
+        galcone_rot['ra'] = np.where(
+            galcone_rot['ra'] < 0,
+            galcone_rot['ra'] + 360,
+            galcone_rot['ra']
+        )
 
     return galcone_rot
 
@@ -424,7 +465,7 @@ def apply_2dflens_geometry(galcone, mask_weight_maps, interp=True, galcone_ids=N
 
     return galcone_2dflens, galcone_ids_out
 
-def apply_nz_downsample(galcone, nofz_info, galcone_ids=None, norm=False, add_rsd=False):
+def apply_nz(galcone, nofz_info, nofz_method, galcone_ids=None, norm=False, add_rsd=False):
     zedges = nofz_info['zedges']
     shell_vol = nofz_info['shell_vol']
     nz_ref = nofz_info['nz_ref']
@@ -435,7 +476,13 @@ def apply_nz_downsample(galcone, nofz_info, galcone_ids=None, norm=False, add_rs
         z_mock = galcone["z"]
         
     Nz_mock, _ = np.histogram(z_mock, zedges)
-    downsample_rate = nz_ref/Nz_mock*shell_vol
+    Nz_target = nz_ref * shell_vol
+    downsample_rate = Nz_target / Nz_mock
+    downsample_rate = np.nan_to_num(downsample_rate, nan=0.0, posinf=0.0, neginf=0.0)
+    downsample_rate = np.clip(downsample_rate, 0, 1)
+    print(Nz_target[80:120])
+    print(Nz_mock[80:120])
+    print(downsample_rate[80:120])
 
     if norm:
         downsample_rate /= np.max(downsample_rate)
@@ -447,18 +494,25 @@ def apply_nz_downsample(galcone, nofz_info, galcone_ids=None, norm=False, add_rs
         galcone_ids_dsampled = []
     else:
         galcone_ids_dsampled = None
-    number_in_bin = []
+
     for ibin in range(len(zedges)-1):
         zmin, zmax = zedges[ibin], zedges[ibin+1]
         in_bin = (z_mock >= zmin) & (z_mock < zmax)
         gal_in_bin = galcone[in_bin]
 
         if len(gal_in_bin) != 0:
-            mask = np.random.choice(np.arange(len(gal_in_bin)), size=int(downsample_rate[ibin]*len(gal_in_bin)), replace=False)
+            if nofz_method == "downsample":
+                mask = np.random.choice(np.arange(len(gal_in_bin)), size=int(downsample_rate[ibin]*len(gal_in_bin)), replace=False)
+            if nofz_method == "rank":
+                ### descending rank of gal in bin
+                ranked_idx = np.argsort(gal_in_bin, order="host_halo_mvir")[::-1]
+                mask = ranked_idx[:Nz_target[ibin]]
+                print(gal_in_bin[ranked_idx[0]]['host_halo_mvir'], gal_in_bin[ranked_idx[-1]]['host_halo_mvir'])
+
             galcone_dsampled.append(gal_in_bin[mask])
-            number_in_bin.append(len(gal_in_bin[mask]))
+            print(gal_in_bin[mask][0]['host_halo_mvir'], gal_in_bin[mask][0]['host_halo_mvir'])
             if galcone_ids is not None:
-                galcone_ids_dsampled.append(galcone_ids[in_bin][mask])
+                galcone_ids_dsampled.append(galcone_ids[in_bin][mask])         
 
     galcone_dsampled = np.concatenate(galcone_dsampled)
 
@@ -466,7 +520,6 @@ def apply_nz_downsample(galcone, nofz_info, galcone_ids=None, norm=False, add_rs
         galcone_ids_dsampled = np.concatenate(galcone_ids_dsampled)
 
     return galcone_dsampled, galcone_ids_dsampled
-
 def make_nofz_info(nofz_info, survey_name, zedges, shell_vol, nz_ref):
     nofz_info[survey_name] = {}
     nofz_info[survey_name]['zedges'] = zedges
@@ -528,7 +581,8 @@ def sample_from_histogram(N:int, x:np.ndarray, pdf:np.ndarray) -> np.ndarray:
 
     # 计算CDF
     cdf = np.cumsum(pdf)
-    cdf[-1] = 1.0  # 确保最后一个是1
+    # cdf[-1] = 1.0  # 确保最后一个是1
+    cdf /= cdf[-1]
 
     # 在[0,1]生成N个随机数
     u = np.random.rand(N)
