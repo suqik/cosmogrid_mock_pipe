@@ -204,7 +204,6 @@ def prepare_masks(
 
 def prepare_nofz(
         survey_part_names:list,
-        zmin, zmax,
         nz_fname_dict:dict
 ):
 
@@ -228,6 +227,24 @@ def prepare_nofz(
 
     return nofz_info
 
+def _open_params_pool(model, prior_low, prior_high, num_pool, seed=None):
+    ### priors do not include f_ic
+    lhc_sampler = qmc.LatinHypercube(d=len(prior_low), seed=seed)
+    hod_params_pool = lhc_sampler.random(n=num_pool)
+    hod_params_pool = qmc.scale(hod_params_pool, prior_low, prior_high)
+
+    ### prior of SIMBIG 
+    if model == 3:
+        mu = 1.0
+        sigma = 0.5
+        lower_bound = prior_low[4]
+        upper_bound = prior_high[4]
+        hod_params_pool[:,4] = truncnorm(
+            (lower_bound - mu)/sigma, (upper_bound - mu)/sigma, loc=mu, scale=sigma
+            ).rvs(size=num_pool)
+        
+    return hod_params_pool
+
 def run_find_hod_params(
         hod_cat, nhod_per_cosmo,
         model_lb, model_params_names, param_prior_low, param_prior_high, ngal_ref,
@@ -243,20 +260,22 @@ def run_find_hod_params(
     idx = 0
     seed = seedini + seed_offset
 
-    ### priors do not include f_ic
-    lhc_sampler = qmc.LatinHypercube(d=len(param_prior_low), seed=seed)
-    hod_params_pool = lhc_sampler.random(n=num_pool)
-    hod_params_pool = qmc.scale(hod_params_pool, param_prior_low, param_prior_high)
+    # ### priors do not include f_ic
+    # lhc_sampler = qmc.LatinHypercube(d=len(param_prior_low), seed=seed)
+    # hod_params_pool = lhc_sampler.random(n=num_pool)
+    # hod_params_pool = qmc.scale(hod_params_pool, param_prior_low, param_prior_high)
 
-    ### prior of SIMBIG 
-    if model_lb == 3:
-        mu = 1.0
-        sigma = 0.5
-        lower_bound = param_prior_low[4]
-        upper_bound = param_prior_high[4]
-        hod_params_pool[:,4] = truncnorm(
-            (lower_bound - mu)/sigma, (upper_bound - mu)/sigma, loc=mu, scale=sigma
-            ).rvs(size=num_pool)
+    # ### prior of SIMBIG 
+    # if model_lb == 3:
+    #     mu = 1.0
+    #     sigma = 0.5
+    #     lower_bound = param_prior_low[4]
+    #     upper_bound = param_prior_high[4]
+    #     hod_params_pool[:,4] = truncnorm(
+    #         (lower_bound - mu)/sigma, (upper_bound - mu)/sigma, loc=mu, scale=sigma
+    #         ).rvs(size=num_pool)
+        
+    hod_params_pool = _open_params_pool(model_lb, param_prior_low, param_prior_high, num_pool, seed)
         
     ## Main loop to find HOD parameters that matches reference galaxy number density
     hod_params_alive = []
@@ -267,14 +286,13 @@ def run_find_hod_params(
             warnings.warn("Found {} HOD parameters that matches reference galaxy number density.".format(count))
             break
 
-        ngal_mock, Nsat_frac = get_ngal(
-            halo_mass=halo_mass, Lbox=Lbox, redshift=redshift,
-            model_lb=model_lb, model_params_names=model_params_names, hod_param_vals=curr_hod_params, 
-        )
-
         if model_lb == 0:
-            # if np.abs(ngal_mock - ngal_ref) < 0.1 and Nsat.max() < 1000: # avoid too many satellite galaxies in one halo
-            if f_ic > 0 and f_ic <= 1.0 and Nsat_frac < 0.3: # avoid too many satellite galaxies in one halo
+            ngal_mock, Nsat_frac = get_ngal(
+                halo_mass=halo_mass, Lbox=Lbox, redshift=redshift,
+                model_lb=model_lb, model_params_names=model_params_names, hod_param_vals=curr_hod_params, 
+            )
+            
+            if np.abs(ngal_mock - ngal_ref) < 0.1 and Nsat_frac < 0.3: # avoid too many satellite galaxies in one halo
                 count += 1
                 idx += 1
                 hod_params_alive.append(curr_hod_params)
@@ -284,20 +302,24 @@ def run_find_hod_params(
 
         ## update fic
         if model_lb == 2 or model_lb == 3 or model_lb == 4:
-            f_ic = ngal_ref/ngal_mock
+            # f_ic = ngal_ref/ngal_mock
 
-            ## FIXME: lower bound of f_ic may need careful consideration.
-            # if f_ic > 0.5 and f_ic <= 1.0 and Nsat.max() < 100: # avoid too many satellite galaxies in one halo
-            # if f_ic > 0 and f_ic <= 1.0 and Nsat.max() < 1000: # avoid too many satellite galaxies in one halo
-            if f_ic > 0 and f_ic <= 1.0 and Nsat_frac < 0.3: # avoid too many satellite galaxies in one halo
-                count += 1  
-                idx += 1
-                ### here we append f_ic to construct total HOD parameters
-                # hod_params_alive.append(np.append(curr_hod_params, f_ic))
-                hod_params_alive.append(list(curr_hod_params)+[f_ic])
-            else:
-                idx += 1
-                continue
+            # ### FIXME: lower bound of f_ic may need careful consideration.
+            # # if f_ic > 0.5 and f_ic <= 1.0 and Nsat.max() < 100: # avoid too many satellite galaxies in one halo
+            # # if f_ic > 0 and f_ic <= 1.0 and Nsat.max() < 1000: # avoid too many satellite galaxies in one halo
+            # if f_ic > 0 and f_ic <= 1.0 and Nsat_frac < 0.3: # avoid too many satellite galaxies in one halo
+            #     count += 1  
+            #     idx += 1
+            #     ### here we append f_ic to construct total HOD parameters
+            #     # hod_params_alive.append(np.append(curr_hod_params, f_ic))
+            #     hod_params_alive.append(list(curr_hod_params)+[f_ic])
+            # else:
+            #     idx += 1
+            #     continue
+
+            hod_params_alive.append(list(curr_hod_params)+[1.0])
+            count += 1
+            idx += 1
     
     return hod_params_alive
 
@@ -527,14 +549,28 @@ def run_apply_geometry(
         geom_boss = masks['boss_geom']['boss_cmass']
         masks_boss = masks['boss_masks']
         galcone_boss, _ = apply_boss_geometry(galcone, geom_boss, masks_boss, galcone_ids=None)
-        print("="*40)
-        print(f"After applying geometry cut: {len(galcone_boss)}")
-        print("="*40)
+
         if nofz_info is not None:
             nofz_boss = nofz_info['boss_cmass']
             galcone_boss, _ = apply_nz(galcone_boss, nofz_boss, nofz_method=nofz_method, norm=False, add_rsd=add_rsd)
 
         galcone_boss['survey'] = 4
+
+        galcone_tot.append(galcone_boss)
+
+    if 'boss_cmass_sgc' in survey_part_names:
+
+        print("\nMaking boss_cmass-like mock")
+
+        geom_boss = masks['boss_geom']['boss_cmass_sgc']
+        masks_boss = masks['boss_masks']
+        galcone_boss, _ = apply_boss_geometry(galcone, geom_boss, masks_boss, galcone_ids=None)
+
+        if nofz_info is not None:
+            nofz_boss = nofz_info['boss_cmass_sgc']
+            galcone_boss, _ = apply_nz(galcone_boss, nofz_boss, nofz_method=nofz_method, norm=False, add_rsd=add_rsd)
+
+        galcone_boss['survey'] = 5
 
         galcone_tot.append(galcone_boss)
 

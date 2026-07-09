@@ -15,7 +15,8 @@ from halotools.sim_manager import UserSuppliedHaloCatalog
 # >>>========   Define constants   =========<<<
 
 Gconst = 4.3009*1e-9 # Mpc/Msun*(km/s)^2
-rhoc0 = 3*100**2/(8*np.pi*Gconst)
+sol = 2.99792458*1e5 # km/s
+rhoc0 = 3*100**2/(8*np.pi*Gconst) # (Msun/h) / (Mpc/h)^3
 
 # >>>=======================================<<<
 
@@ -48,17 +49,6 @@ make_survey_type = np.dtype([
     ("w", "f4"),
     ("nref", "f4"),
     ("dummy", "f4"),
-])
-
-### DIVE input tracer catalog
-dive_tracer_type = np.dtype([
-    ("pos", ("f4", 3))
-])
-
-### DIVE output void catalog
-dive_void_type = np.dtype([
-    ("pos", ("f4", 3)),
-    ("Rv", "f4")
 ])
 
 ### SWOT input background catalog (ascii)
@@ -289,6 +279,7 @@ def get_pkd_halo_attrs(fname:str, attrs:Union[str,list]=["pos", "mass"], Lbox:fl
         iattr = attrs[idx]
         if iattr == "pos":
             if Lbox is not None:
+                # https://cosmo-gitlab.phys.ethz.ch/jafluri/pkdgrav3_intro/-/tree/main/example/pkdgrav3_output?ref_type=heads
                 int_fac = 1.0 / 0x80000000
                 pos = Lbox * (halo["rPot"] * int_fac + halo["rcen"] + 0.5)
                 # outputs.append(pos)
@@ -304,8 +295,8 @@ def get_pkd_halo_attrs(fname:str, attrs:Union[str,list]=["pos", "mass"], Lbox:fl
                 raise ValueError("Calculate mass needs boxsize as input!")
         elif iattr == "vel":
             if Lbox is not None and redshift is not None:
-                vel_fac = 100*Lbox*np.sqrt(3./(8*np.pi))/(1+redshift)
-                # vel_fac = np.sqrt(8*np.pi/3) / (100 * Lbox) * (1+redshift)
+                # https://cosmo-gitlab.phys.ethz.ch/jafluri/pkdgrav3_intro/-/tree/main/example/pkdgrav3_output?ref_type=heads
+                vel_fac = 100*Lbox*np.sqrt(3./(8*np.pi))*(1+redshift)
                 vel = halo["vcom"]*vel_fac
                 # outputs.append(vel)
                 outputs["vel"] = vel
@@ -386,42 +377,6 @@ def pkd_to_hod_type(pkd_infos:dict, cosmo:ccl.Cosmology, pmass:float, boxsize:fl
     )
 
     return halo_cat
-
-
-def lcone_to_swot_type(lcone_pos:np.ndarray, cosmo:ccl.Cosmology, weight:np.ndarray=None):
-    '''
-    Transform the default lightcone format (3D Cartesian coordinates) to SWOT foreground format.
-
-    Parameters:
-    ----------
-    lcone_pos: np.ndarray
-        Positions of lightcone particles. Should be in Cartesian coordinates.
-    cosmo: ccl.Cosmology
-        Cosmology info from pyccl. Used to calculate redshifts.
-    weight: np.ndarray or None
-        Weights of the tracers containing observational systematics. In simulation
-        this can be ignored. Default are unions.
-
-    Returns:
-    -------
-    outputs: np.ndarray
-        Positions and weights in SWOT format. Can be saved and read by SWOT.
-    '''
-    ntot = len(lcone_pos)
-    tracer_ra, tracer_dec = hp.vec2ang(lcone_pos, lonlat=True)
-    tracer_chi = np.linalg.norm(lcone_pos, axis=1)
-    tracer_z = 1./ccl.scale_factor_of_chi(cosmo, tracer_chi/cosmo.to_dict()["h"]) - 1
-    
-    outputs = np.empty((ntot,), dtype=fgal_type)
-    outputs['ra'] = tracer_ra
-    outputs['dec'] = tracer_dec
-    outputs['z'] = tracer_z
-    if weight is not None:
-        outputs['w'] = weight
-    else:
-        outputs['w'] = np.ones(ntot)
-    
-    return outputs
 
 def load_raytracing_maps(fname:str, quantities:Union[str, list]=["gamma1", "gamma2"]) -> dict:
     '''
