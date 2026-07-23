@@ -63,13 +63,16 @@ bgal_type = np.dtype(
         ("g2", "f4"), 
         ("g1_pure", "f4"),
         ("g2_pure", "f4"),
-        ("w", "f4")
+        ("w", "f4"),
+        ("tomo", "i4"),
+        ("survey", "i4")
     ]
 )
 
 ### matched foreground catalog
 ### survey label: 0 for LOWZ, 1 for LOWZE2, 2 for LOWZE3, 3 for 2dFLenS, 4 for CMASS
 ### gal_type: 1 for central, 0 for satellite
+### GID: particle id in box, for estimating replication rate.
 fgal_type = np.dtype(
     [
         ("ra", "f4"), 
@@ -79,7 +82,8 @@ fgal_type = np.dtype(
         ("w", "f4"),
         ("survey", "i4"),
         ("gal_type", "i4"),
-        ("host_halo_mvir", "f4")
+        ("host_halo_mvir", "f4"),
+        ("GID", "i4")
     ]
 )
 
@@ -97,153 +101,6 @@ fvoid_type = np.dtype(
 # >>>========================================================<<<
 
 # >>>==================    I/O functions   ==================<<<
-def get_cosmo_name_list_original(fname:str="/data3/suchen/CosmoGridV1/grid/dirnames.txt"):
-    '''
-    Read cosmo labels from source files.
-    '''
-    if not os.path.exists(fname):
-        raise FileNotFoundError(f"File {fname} not found!")
-    
-    with open(fname, "r") as f:
-        cosmo_labels_tot = []
-        for line in f.readlines():
-            cosmo_labels_tot.append(int(line.strip("\n").split("_")[1]))
-
-    return cosmo_labels_tot
-
-def get_cosmo_name_list_process(hod_param_fname:str):
-    '''
-    Read cosmo labels from hod param json file.
-    '''
-
-    if not os.path.exists(hod_param_fname):
-        raise FileNotFoundError(f"File {hod_param_fname} not found!")
-
-    hod_params_dict = get_hod_params(hod_param_fname, otype="dict")
-    cosmo_labels_tot = []
-
-    for icosmo_str in hod_params_dict.keys():
-        if len(hod_params_dict[icosmo_str]) == 11:
-            cosmo_labels_tot.append(int(icosmo_str[5:]))
-
-    return cosmo_labels_tot
-
-def get_cosmo_from_file(fname:str, otype="ccl") -> Union[dict, ccl.Cosmology]:
-    '''
-    Get cosmology from PKDGrav3 config. Can transform to ccl format
-
-    Parameters:
-    ----------
-    fname: str
-        Input ascii file name.
-    otype: str
-        Output type. Can be "dict" or "ccl".
-
-    Returns:
-    -------
-    outputs: dict or ccl.Cosmology
-        Cosmology dictionary.
-    '''
-
-    cosmo_par = {}
-    with open(fname, "r") as f:
-        for line in f.readlines():
-            items = line.split(":")
-            cosmo_par[items[0]] = float(items[1])
-    
-    if otype == "ccl":
-        outputs = ccl.Cosmology(
-            h=cosmo_par["H0"]/100, 
-            Omega_b=cosmo_par["Ob"], 
-            Omega_c=cosmo_par["O_cdm"], 
-            sigma8=cosmo_par["s8"], 
-            n_s=cosmo_par["ns"], 
-            w0=cosmo_par["w0"], 
-            wa=cosmo_par["wa"],
-            m_nu=cosmo_par["m_nu"]*3
-        )
-    elif otype == "dict":
-        outputs = cosmo_par
-    else:
-        raise NotImplementedError(f"Output type {otype} not implemented!")
-
-    return outputs
-
-def get_hod_params(fname:str, otype:str='dict') -> Union[dict, np.ndarray]:
-    '''
-    Get HOD parameters from file.
-
-    Parameters:
-    ----------
-    fname: str
-        Input file name.
-
-    otype: str
-        Output type. Can be "dict" or "array".
-
-    Returns:
-    -------
-    outputs: dict
-        A dictionary of HOD parameters.
-    '''
-
-    with open(fname, "r") as f:
-        hod_params = json.load(f)
-    
-    if otype == "array":
-        hod_params_arr = []
-        for icosmo in len(hod_params):
-            nhod_in_curr_cosmo = len(hod_params[f'cosmo{icosmo:06d}']) - 1
-            for ihod in len(nhod_in_curr_cosmo):
-                hod_params_arr.append(hod_params[f'cosmo{icosmo:06d}'][f'HOD{ihod}'])
-        
-        hod_params_arr = np.asarray(hod_params_arr)
-        
-        return hod_params_arr
-    
-    elif otype == "dict":
-        return hod_params
-    else:
-        raise ValueError(f"Output type {otype} not implemented!")
-
-def get_cosmo_from_json(fname:str, nhod=None):
-
-    '''
-    Load cosmo parameters from COSMO-HOD json file.
-    '''
-
-    with open(fname, "r") as f:
-        cosmo_tot_dict = json.load(f)
-
-    cosmo_labels = []
-    cosmo_params = []
-    if nhod is not None:
-        for icosmo_str in cosmo_tot_dict.keys():
-                if len(cosmo_tot_dict[icosmo_str]) == nhod:
-                    cosmo_params.append([
-                        cosmo_tot_dict[icosmo_str]['cpar']['Om'],
-                        cosmo_tot_dict[icosmo_str]['cpar']['Ob'],
-                        cosmo_tot_dict[icosmo_str]['cpar']['H0'],
-                        cosmo_tot_dict[icosmo_str]['cpar']['ns'],
-                        cosmo_tot_dict[icosmo_str]['cpar']['s8'],
-                        cosmo_tot_dict[icosmo_str]['cpar']['w0'],
-                    ])
-                    cosmo_labels.append(int(icosmo_str[5:]))
-                else:
-                    continue
-    else:
-        for icosmo_str in cosmo_tot_dict.keys():
-            cosmo_params.append([
-                cosmo_tot_dict[icosmo_str]['cpar']['Om'],
-                cosmo_tot_dict[icosmo_str]['cpar']['Ob'],
-                cosmo_tot_dict[icosmo_str]['cpar']['H0'],
-                cosmo_tot_dict[icosmo_str]['cpar']['ns'],
-                cosmo_tot_dict[icosmo_str]['cpar']['s8'],
-                cosmo_tot_dict[icosmo_str]['cpar']['w0'],
-            ])
-            cosmo_labels.append(int(icosmo_str[5:]))
-
-    return cosmo_params, cosmo_labels
 
 def get_pkd_halo_attrs(fname:str, attrs:Union[str,list]=["pos", "mass"], Lbox:float=None, redshift:float=None) -> dict:
     '''

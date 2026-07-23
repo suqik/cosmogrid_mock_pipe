@@ -19,13 +19,11 @@ from halotools.custom_exceptions import HalotoolsError
 class ModelClass():
   """ The class that populates the halo catalog with galaxies
   given the config file """
-  def __init__(self, halo_files, halo_cat_list, \
-          model, num_params, param_names,\
-           redshift, box_size, Omega_m,\
-            init_seed, num_seeds,\
-            z_space=False, Num_ptcl_requirement=12, verbose=True):
 
-    self.model = int(model)
+  def __init__(self, halo_files, halo_cat_list, \
+          pipe_config, OmegaM=None):
+
+    self.model = int(pipe_config.model)
     if self.model == 0:
       model_name = 'MW'
     elif self.model == 1:
@@ -38,32 +36,32 @@ class ModelClass():
       model_name = 'MW_ficAssemblyBias'    
     else:
       raise ValueError('Unrecognised model')
-    self.parameters_names = param_names
-    self.num_params = int(num_params)
+    self.parameters_names = pipe_config.model_params_names
+    self.num_params = len(self.parameters_names)
 
     print(f'\nINFO: The used HOD model is {model_name} having {self.parameters_names} as parameters')
-    if len(self.parameters_names) != self.num_params:
-      print("ERROR: Check the num_params and model_params_names in the config file")
-      sys.exit(1)
+    # if len(self.parameters_names) != self.num_params:
+    #   print("ERROR: Check the num_params and model_params_names in the config file")
+    #   sys.exit(1)
 
-    self.verbose   = verbose
-    self.redshift  = redshift
-    self.box_size  = box_size
-    self.Omega_m   = Omega_m
-    self.init_seed = init_seed
-    self.num_seeds = num_seeds
+    self.verbose   = pipe_config.verbose
+    self.redshift  = pipe_config.redshift
+    self.box_size  = pipe_config.Lbox
+    self.init_seed = pipe_config.init_seed
+    self.num_seeds = pipe_config.num_seeds
 
     print(f'\nINFO: The number of seeds to populate galaxies is {self.num_seeds}, starting from {self.init_seed}')
-    self.z_space = z_space
+    self.z_space = pipe_config.z_space
     self.halo_files = halo_files
     print(f'\nINFO: The number of halo catalogs used to populate galaxies is {len(halo_files)}')
 
-    self.Num_ptcl_requirement = Num_ptcl_requirement
+    self.Num_ptcl_requirement = pipe_config.Num_ptcl_requirement
 
     self.halo_cat_list = halo_cat_list
     self.model_instance = self.compute_model_instance()
-    self.rsd_shift = self.compute_rsd_shift()
-
+    if self.z_space:
+      self.Omega_m = OmegaM
+      self.rsd_shift = self.compute_rsd_shift()
 
   def compute_model_instance(self):
     """ Compute model instance """

@@ -58,6 +58,62 @@ def get_HMF(mass, bins, boxsize, isedge=False, bin_scale='linear', ifcum=True):
         return mctr_list, logNm_list
 # >>>=============================================================================<<<
 
+# >>>===========================   HOD help functions   ==========================<<<
+def get_ngal(
+        halo_mass, Lbox, redshift,
+        model_lb, model_params_names, hod_param_vals, 
+        ):
+    '''
+    Calculate theoretical predictions of ngal given HMF.
+    '''
+    if isinstance(hod_param_vals, list) or isinstance(hod_param_vals, np.ndarray):
+        model_params_dict = dict(zip(model_params_names, hod_param_vals))
+    elif isinstance(hod_param_vals, dict):
+        model_params_dict = hod_param_vals.copy()
+    else:
+        raise ValueError("hod_param_vals should be list or dict")
+
+    Mmin = halo_mass.min()
+    Mmax = halo_mass.max()
+
+    nMbin = 30
+    dlgM = np.log10(Mmax/Mmin)/(nMbin-1)
+    Mbin_edges = np.logspace(np.log10(Mmin)-dlgM, np.log10(Mmax)+dlgM, nMbin)
+
+    massbin, NM = get_HMF(halo_mass, Mbin_edges, boxsize=Lbox, isedge=True, bin_scale='log', ifcum=False)
+
+    tmp_dict = model_params_dict.copy()
+    tmp_dict['fic'] = 1.0
+
+    if model_lb == 0:
+        ctr = MWCens(redshift=redshift)
+    elif model_lb == 2 or model_lb == 3:
+        ctr = MWCens_IC(redshift=redshift)
+    elif model_lb == 4:
+        ctr = ABMWCens_IC(redshift=redshift)
+
+    ctr.param_dict = tmp_dict
+    Nctr = ctr.mean_occupation(prim_haloprop=massbin)
+
+    if model_lb == 0 or model_lb == 2:
+        sat = MWSats(redshift=redshift, cenocc_model=ctr, modulate_with_cenocc=True)
+    elif model_lb == 3:
+        sat = MWSats2(redshift=redshift, cenocc_model=ctr, modulate_with_cenocc=True)
+    elif model_lb == 4:
+        sat = ABMWSats(redshift=redshift, cenocc_model=ctr, modulate_with_cenocc=True)
+
+    sat.param_dict = tmp_dict
+    Nsat = sat.mean_occupation(prim_haloprop=massbin)
+
+    ngal_mock = (np.sum(Nctr*NM) + np.sum(Nsat*NM))
+
+    Nsat_frac = Nsat.sum()/(Nctr+Nsat).sum()
+
+    return ngal_mock, Nsat_frac
+
+# >>>=============================================================================<<<
+
+
 def Sph2Cart(cosmo_ccl:ccl.Cosmology, **kwargs) -> np.ndarray:
     hubble = cosmo_ccl.to_dict()['h']
     if 'pos' in kwargs.keys():
@@ -117,6 +173,12 @@ def box_recenter(pos:np.ndarray, center:Union[tuple,list,np.ndarray], boxsize:fl
     '''
     local_pos = ((pos-np.array(center)*boxsize)+boxsize) % boxsize
     return local_pos
+
+def push_box(pos, shift, boxsize):
+    local_pos = (pos + boxsize) % boxsize
+    local_pos += shift*boxsize
+
+    return local_pos
     
 def cut_shell_one_box(pos:np.ndarray, gid:np.ndarray, 
                       boxsize:float, 
@@ -153,8 +215,9 @@ def cut_shell_one_box(pos:np.ndarray, gid:np.ndarray,
         Other properties after cutting out the shell.
     '''
 
-    local_pos = (pos + boxsize) % boxsize
-    local_pos += shift*boxsize
+    # local_pos = (pos + boxsize) % boxsize
+    # local_pos += shift*boxsize
+    local_pos = push_box(pos, shift, boxsize)
     
     cut = ((np.linalg.norm(local_pos,axis=1)>rmin)&(np.linalg.norm(local_pos,axis=1)<rmax))
     local_pos = local_pos[cut]
@@ -172,62 +235,153 @@ def cut_shell_one_box(pos:np.ndarray, gid:np.ndarray,
     else:
         return np.c_[local_pos, local_gid]
 
-def search_cross_box(boxsize:float, radius:float) -> np.ndarray:
-    '''
-    Search for all possible box crossing points within a given radius.
-    
-    Parameters:
-    ----------
-    boxsize: float
-        The size of the box edge.
-    radius: float
-        The radius of the crossing ring.
-    
-    Returns:
-    -------
-    unique_indice: np.ndarray
-        An array of indices representing the possible box crossing points.
-    '''
-    nmax = int(np.ceil(radius/boxsize))
-    search_indice_1d = np.arange(nmax)
-    search_indice = np.array(np.meshgrid(search_indice_1d, search_indice_1d, search_indice_1d)).T.reshape(-1,3)
-    nearest_dist_sq = np.sqrt(np.sum(search_indice**2, axis=1))
-    farest_dist_sq  = np.sqrt(np.sum((search_indice+1)**2, axis=1))
-    choice = ((nearest_dist_sq<radius/boxsize)&(farest_dist_sq>radius/boxsize))
-    search_indice = search_indice[choice]
+def _expand_box_indices(indices_positive):
+    """
+    Expand box indices in the positive octant to all eight octants.
 
-    search_indice = search_indice.astype(float) + 0.5
-    signs = np.array(np.meshgrid([-1, 1], [-1, 1], [-1, 1])).T.reshape(-1, 3)
-    expand_indice = (search_indice[:, None, :]*signs[None, :, :]).reshape(-1, 3)
-    unique_indice = np.unique(expand_indice, axis=0)
-    unique_indice = (np.floor(unique_indice-0.5)).astype(int)
-    
-    return unique_indice
+    A positive-octant box index i represents [i, i + 1].
+    Its mirror image is therefore [-i - 1, -i].
+    """
+    if indices_positive.shape[0] == 0:
+        return np.empty((0, 3), dtype=np.int64)
+
+    signs = np.array(
+        np.meshgrid(
+            [-1, 1],
+            [-1, 1],
+            [-1, 1],
+            indexing="ij",
+        )
+    ).reshape(3, -1).T
+
+    expanded_indices = np.where(
+        signs[None, :, :] > 0,
+        indices_positive[:, None, :],
+        -indices_positive[:, None, :] - 1,
+    )
+
+    expanded_indices = expanded_indices.reshape(-1, 3)
+
+    return np.unique(expanded_indices, axis=0).astype(np.int64)
+
 
 def get_cross_box_indice(boxsize:float, chi_min:float, chi_max:float) -> np.ndarray:
-    '''
-    Get the indices of all possible box crossing points within a given range.
+    """
+    Search boxes associated with the spherical shell
 
-    Parameters:
+        chi_min <= chi <= chi_max.
+
+    Boxes are divided into two groups:
+
+    1. crossing_indices:
+       Boxes crossed by the chi_min or chi_max spherical surface.
+       Particles in these boxes must be filtered individually.
+
+    2. inside_indices:
+       Boxes lying completely inside the spherical shell.
+       All particles in these boxes can be retained directly.
+
+    Parameters
     ----------
-    boxsize: float
-        The size of the box edge.
-    chi_min: float
-        The minimum radius of the crossing ring.
-    chi_max: float
-        The maximum radius of the crossing ring.
+    boxsize : float
+        Side length of one box.
+    chi_min : float
+        Inner radius of the spherical shell.
+    chi_max : float
+        Outer radius of the spherical shell.
 
-    Returns:
+    Returns
     -------
-    indice_all: np.ndarray
-        An array of indices representing the possible box crossing points.
+    crossing_indices : ndarray of shape (N_crossing, 3)
+        Indices of boxes crossing either spherical boundary.
 
-    '''
-    indice_min = search_cross_box(boxsize, chi_min)
-    indice_max = search_cross_box(boxsize, chi_max)
-    indice_all = np.unique(np.vstack((indice_min, indice_max)), axis=0)
+    inside_indices : ndarray of shape (N_inside, 3)
+        Indices of boxes completely inside the spherical shell.
+    """
+    if boxsize <= 0:
+        raise ValueError("boxsize must be positive.")
 
-    return indice_all
+    if chi_min < 0:
+        raise ValueError("chi_min must be non-negative.")
+
+    if chi_max < chi_min:
+        raise ValueError("chi_max must be greater than or equal to chi_min.")
+
+    # Work in units of boxsize.
+    radius_min = chi_min / boxsize
+    radius_max = chi_max / boxsize
+
+    # Search the positive octant first.
+    nmax = int(np.ceil(radius_max))
+
+    if nmax == 0:
+        empty = np.empty((0, 3), dtype=np.int64)
+        return empty, empty.copy()
+
+    search_indices_1d = np.arange(nmax, dtype=np.int64)
+
+    ix, iy, iz = np.meshgrid(
+        search_indices_1d,
+        search_indices_1d,
+        search_indices_1d,
+        indexing="ij",
+    )
+
+    search_indices = np.column_stack(
+        (
+            ix.ravel(),
+            iy.ravel(),
+            iz.ravel(),
+        )
+    )
+
+    # For a positive-octant box [i, i+1] × [j, j+1] × [k, k+1]:
+    #
+    # nearest corner  = [i, j, k]
+    # farthest corner = [i+1, j+1, k+1]
+    #
+    # Squared distances are sufficient, avoiding sqrt.
+    nearest_dist_sq = np.sum(
+        search_indices.astype(float) ** 2,
+        axis=1,
+    )
+
+    farthest_dist_sq = np.sum(
+        (search_indices.astype(float) + 1.0) ** 2,
+        axis=1,
+    )
+
+    radius_min_sq = radius_min**2
+    radius_max_sq = radius_max**2
+
+    # Completely contained in the shell.
+    inside_choice = (
+        (nearest_dist_sq >= radius_min_sq)
+        & (farthest_dist_sq <= radius_max_sq)
+    )
+
+    # Crosses the inner spherical boundary.
+    cross_inner_choice = (
+        (nearest_dist_sq < radius_min_sq)
+        & (farthest_dist_sq > radius_min_sq)
+    )
+
+    # Crosses the outer spherical boundary.
+    cross_outer_choice = (
+        (nearest_dist_sq < radius_max_sq)
+        & (farthest_dist_sq > radius_max_sq)
+    )
+
+    crossing_choice = cross_inner_choice | cross_outer_choice
+
+    crossing_positive = search_indices[crossing_choice]
+    inside_positive = search_indices[inside_choice]
+
+    # Expand positive-octant indices to all octants.
+    crossing_indices = _expand_box_indices(crossing_positive)
+    inside_indices = _expand_box_indices(inside_positive)
+
+    return crossing_indices, inside_indices
 
 def make_lightcone_tiles(
         position:np.ndarray, boxsize:float, 
@@ -272,7 +426,7 @@ def make_lightcone_tiles(
 
     if type(ctr) is int:
         ctr = [ctr]*3
-    shift_list = get_cross_box_indice(boxsize, chi_min, chi_max)
+    crossing_indice, inside_indice = get_cross_box_indice(boxsize, chi_min, chi_max)
     pos_rectr = box_recenter(position, ctr, boxsize)
     gid = np.arange(len(position)) # Global ID of each tracer, start from 0
     
@@ -283,12 +437,18 @@ def make_lightcone_tiles(
         for iprop in range(num_props):
             tmp_lightcone_props[f"prop{iprop}"] = []
 
-        for idx in range(len(shift_list)):
-            tmp_pos_id, tmp_prop = cut_shell_one_box(pos_rectr, gid, boxsize, shift_list[idx], chi_min, chi_max, other_props=other_props)
+        for idx in range(len(crossing_indice)):
+            tmp_pos_id, tmp_prop = cut_shell_one_box(pos_rectr, gid, boxsize, crossing_indice[idx], chi_min, chi_max, other_props=other_props)
             lightcone.append(tmp_pos_id)
             for iprop in range(num_props):
                 tmp_lightcone_props[f"prop{iprop}"].append(tmp_prop[iprop])
-                # print(f"tmp_lightcone_props[{iprop}] appended shape {tmp_prop[iprop].shape}. Current len: {len(tmp_lightcone_props[f"prop{iprop}"])}")
+        
+        for idx in range(len(inside_indice)):
+            tmp_pos_id = np.c_[push_box(pos_rectr, inside_indice[idx], boxsize), gid]
+            tmp_prop = other_props
+            lightcone.append(tmp_pos_id)
+            for iprop in range(num_props):
+                tmp_lightcone_props[f"prop{iprop}"].append(tmp_prop[iprop])
         
         lightcone = np.vstack(lightcone)
         lightcone_props = []
@@ -301,9 +461,13 @@ def make_lightcone_tiles(
         return lightcone, lightcone_props
 
     else:   
-        for idx in range(len(shift_list)):
-            tmp = cut_shell_one_box(pos_rectr, gid, boxsize, shift_list[idx], chi_min, chi_max)
-            lightcone.append(tmp)
+        for idx in range(len(crossing_indice)):
+            tmp_pos_id = cut_shell_one_box(pos_rectr, gid, boxsize, crossing_indice[idx], chi_min, chi_max)
+            lightcone.append(tmp_pos_id)
+
+        for idx in range(len(inside_indice)):
+            tmp_pos_id = np.c_[push_box(pos_rectr, inside_indice[idx], boxsize), gid]
+            lightcone.append(tmp_pos_id)
         lightcone = np.vstack(lightcone)
 
         return lightcone
@@ -405,7 +569,7 @@ def rotate_lightcone(galcone, rot_degrees, inv=False, icoord='radec'):
 
 # >>>============   Apply survey geometry and radial selection  ==================<<<
 
-def apply_boss_geometry(galcone, geom_polygon, masks, galcone_ids=None):
+def apply_boss_geometry(galcone, geom_polygon, masks):
     mask = geom_polygon.contains(galcone["ra"], galcone["dec"])
     galcone_boss = galcone[mask]
     galcone_boss["w"] = geom_polygon.weight(galcone_boss["ra"], galcone_boss["dec"])
@@ -413,31 +577,20 @@ def apply_boss_geometry(galcone, geom_polygon, masks, galcone_ids=None):
     select = galcone_boss["w"] > 0
     galcone_boss = galcone_boss[select]
 
-    if galcone_ids is not None:
-        galcone_ids_out = galcone_ids[mask][select]
-    else:
-        galcone_ids_out = None
-
     for ipoly in range(len(masks)):
         mask = masks[ipoly].contains(galcone_boss["ra"], galcone_boss["dec"])
         tot_mask = mask if ipoly == 0 else tot_mask | mask
     galcone_boss = galcone_boss[~tot_mask]
 
-    if galcone_ids is not None:
-        galcone_ids_out = galcone_ids_out[~tot_mask]
+    return galcone_boss
 
-    return galcone_boss, galcone_ids_out
-
-def apply_boss_lowze2e3_trim(galcone, lowz_polygon, galcone_ids=None):
+def apply_boss_lowze2e3_trim(galcone, lowz_polygon):
     trim = lowz_polygon.weight(galcone["ra"], galcone["dec"]) == 0
     galcone_trimmed = galcone[trim]
-    if galcone_ids is not None:
-        galcone_ids_out = galcone_ids[trim]
-    else:
-        galcone_ids_out = None
-    return galcone_trimmed, galcone_ids_out
 
-def apply_2dflens_geometry(galcone, mask_weight_maps, interp=True, galcone_ids=None):
+    return galcone_trimmed
+
+def apply_2dflens_geometry(galcone, mask_weight_maps, interp=True):
     mask_map = mask_weight_maps[0]
     weight_map = mask_weight_maps[1]
     ### apply mask
@@ -446,11 +599,6 @@ def apply_2dflens_geometry(galcone, mask_weight_maps, interp=True, galcone_ids=N
     galcone_pix = hp.ang2pix(nside, galcone["ra"], galcone["dec"], lonlat=True)
     select = mask_map[galcone_pix] > 0
     galcone_2dflens = galcone[select]
-    
-    if galcone_ids is not None:
-        galcone_ids_out = galcone_ids[select]
-    else:
-        galcone_ids_out = None
 
     if interp:
         galcone_2dflens["w"] = hp.get_interp_val(weight_map, galcone_2dflens["ra"], galcone_2dflens["dec"], lonlat=True)
@@ -460,12 +608,9 @@ def apply_2dflens_geometry(galcone, mask_weight_maps, interp=True, galcone_ids=N
     select = galcone_2dflens["w"] > 0
     galcone_2dflens = galcone_2dflens[select]
 
-    if galcone_ids is not None:
-        galcone_ids_out = galcone_ids_out[select]
+    return galcone_2dflens
 
-    return galcone_2dflens, galcone_ids_out
-
-def apply_nz(galcone, nofz_info, nofz_method, galcone_ids=None, norm=False, add_rsd=False):
+def apply_nz(galcone, nofz_info, nofz_method, norm=False, add_rsd=False):
     zedges = nofz_info['zedges']
     shell_vol = nofz_info['shell_vol']
     nz_ref = nofz_info['nz_ref']
@@ -480,9 +625,6 @@ def apply_nz(galcone, nofz_info, nofz_method, galcone_ids=None, norm=False, add_
     downsample_rate = Nz_target / Nz_mock
     downsample_rate = np.nan_to_num(downsample_rate, nan=0.0, posinf=0.0, neginf=0.0)
     downsample_rate = np.clip(downsample_rate, 0, 1)
-    print(Nz_target[80:120])
-    print(Nz_mock[80:120])
-    print(downsample_rate[80:120])
 
     if norm:
         downsample_rate /= np.max(downsample_rate)
@@ -490,10 +632,6 @@ def apply_nz(galcone, nofz_info, nofz_method, galcone_ids=None, norm=False, add_
     downsample_rate = np.clip(downsample_rate, 0, 1)
     
     galcone_dsampled = []
-    if galcone_ids is not None:
-        galcone_ids_dsampled = []
-    else:
-        galcone_ids_dsampled = None
 
     for ibin in range(len(zedges)-1):
         zmin, zmax = zedges[ibin], zedges[ibin+1]
@@ -507,19 +645,15 @@ def apply_nz(galcone, nofz_info, nofz_method, galcone_ids=None, norm=False, add_
                 ### descending rank of gal in bin
                 ranked_idx = np.argsort(gal_in_bin, order="host_halo_mvir")[::-1]
                 mask = ranked_idx[:Nz_target[ibin]]
-                print(gal_in_bin[ranked_idx[0]]['host_halo_mvir'], gal_in_bin[ranked_idx[-1]]['host_halo_mvir'])
 
             galcone_dsampled.append(gal_in_bin[mask])
-            print(gal_in_bin[mask][0]['host_halo_mvir'], gal_in_bin[mask][0]['host_halo_mvir'])
-            if galcone_ids is not None:
-                galcone_ids_dsampled.append(galcone_ids[in_bin][mask])         
+            if nofz_method == "const":
+                pass
 
     galcone_dsampled = np.concatenate(galcone_dsampled)
 
-    if galcone_ids is not None:
-        galcone_ids_dsampled = np.concatenate(galcone_ids_dsampled)
+    return galcone_dsampled
 
-    return galcone_dsampled, galcone_ids_dsampled
 def make_nofz_info(nofz_info, survey_name, zedges, shell_vol, nz_ref):
     nofz_info[survey_name] = {}
     nofz_info[survey_name]['zedges'] = zedges
