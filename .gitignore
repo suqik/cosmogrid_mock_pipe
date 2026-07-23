@@ -18,3 +18,4 @@ job_logs/
 measurements/
 cfgs/.old/
 cfgs/fcfc*
+submit.sh
