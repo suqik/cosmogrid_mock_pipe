@@ -15,4 +15,6 @@ __pycache__/
 tmp/
 job_logs/
 .deprecated/
-develop/
+measurements/
+cfgs/.old/
+cfgs/fcfc*
