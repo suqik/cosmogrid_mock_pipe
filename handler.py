@@ -531,6 +531,13 @@ class ShearAssigner:
 
         return bg_galcat
     
+    def assign_weights(self, bg_galcat:np.ndarray, weight_type='unity'):
+        match weight_type:
+            case 'unity':
+                bg_galcat['w'] = 1.0
+
+        return bg_galcat
+    
     def rotate_pix(self, pix, nside, rot_degrees):
         r = R.from_euler('zyx', rot_degrees, degrees=True)
         norm_vec_x, norm_vec_y, norm_vec_z = hp.pix2vec(nside=nside, ipix=pix)
