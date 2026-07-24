@@ -118,27 +118,36 @@ if __name__ == "__main__":
 
     redshift_src_list = np.concatenate([np.arange(0.1,1.0,0.05), np.arange(1.0, 2.0, 0.1), np.array([2.0,2.2,2.4,2.8,3.2,3.6])])
 
-    tomo_name_list = ['tomo{}'.format(i) for i in range(1,6)]
-    ngal_list = [0.62, 1.18, 1.85, 1.26, 1.31]
-    tomo_label_list = np.arange(5) + 1
-
-    back_ngals_dict = dict(zip(tomo_name_list, ngal_list))
-    tomo_labels_dict = dict(zip(tomo_name_list, tomo_label_list))
-
     back_mask_fnames_dict = {
-        'KiDS1000-North': f"{mask_dirbase}/mask_KiDS_North_1024.fits"
+        # 'KiDS1000-North': f"{mask_dirbase}/mask_KiDS_North_1024.fits",
+        'boss_cmass_ngc': f"{mask_dirbase}/boss_geom/mask_DR12v5_CMASS_North.ply"
     }
 
     back_survey_labels_dict = {
-        'KiDS1000-North': 0
+        # 'KiDS1000-North': 0,
+        'boss_cmass_ngc': 2
     }
 
+    tomo_name_list = ['tomo{}'.format(i) for i in range(1,6)]
+    ngal_list = [0.62, 1.18, 1.85, 1.26, 1.31]
+    tomo_label_list = np.arange(5) + 1
     back_nofz_ffmt = nofz_dirbase + "/srcs/K1000_NS_V1.0.0A_ugriZYJHKs_photoz_SG_mask_LF_svn_309c_2Dbins_v2_SOMcols_Fid_blindC_TOMO{}_Nz.asc"
     back_nofz_fnames = [back_nofz_ffmt.format(i) for i in range(1, 6)]
-    back_nofz_fnames_dict = dict(zip(tomo_name_list, back_nofz_fnames))
+
+    # back_ngals_dict = dict(zip(tomo_name_list, ngal_list))
+    # tomo_labels_dict = dict(zip(tomo_name_list, tomo_label_list))
+    # back_nofz_fnames_dict = dict(zip(tomo_name_list, back_nofz_fnames))
+
+    back_ngals_dict = {'tomo4': 1.26,
+                    'tomo5': 1.31}
+    tomo_labels_dict = {'tomo4': 4,
+                        'tomo5': 5}
+    back_nofz_fnames_dict = {'tomo4': back_nofz_ffmt.format(4),
+                            'tomo5': back_nofz_ffmt.format(5)}
 
     cosmo_hod_file = f"{wdir}/cfgs/hod/hod_5params_dict_free_ngal_cmass_v2.json"
-    shapecone_fmt = "/data2/suchen/CosmoGrid/Shape/KiDS1000-North_5tomos/cosmo_{:06d}_run_{:d}_kids1000N_5tomos.fits"
+    shapecone_dir = "/data2/suchen/CosmoGrid/Shape/boss_ngc_2tomos"
+    shapecone_fmt = shapecone_dir + "/cosmo_{:06d}_run_0_boss_north_2tomos.fits"
 
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
