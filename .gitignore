@@ -15,7 +15,9 @@ __pycache__/
 tmp/
 job_logs/
 .deprecated/
-measurements/
+measurements/.deprecated
+measurements/.ipynb_checkpoints
+measurements/*.ipynb
 cfgs/.old/
 cfgs/fcfc*
 submit.sh
