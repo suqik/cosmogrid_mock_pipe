@@ -387,6 +387,8 @@ class CosmoGridRunner:
                 shapecone_curr = self.shear_assigner.gen_gal_positions(ngal=self.back_ngals_dict[itomo_name], tomo_label=itomo_label, 
                                                                        survey_name=isurvey_name, survey_label=isurvey_label)
                 shapecone_curr = self.shear_assigner.assign_shear(shapecone_curr, shear_maps_curr)
+                ### FIXME: Support assigning weights by weight map in the future
+                shapecone_curr = self.shear_assigner.assign_weights(shapecone_curr, weight_type='unity')
 
                 print(f"Tomo {itomo_label}: {len(shapecone_curr)}", flush=True)
 
@@ -394,6 +396,7 @@ class CosmoGridRunner:
 
         shapecone_survey = np.concatenate(shapecone_survey)
 
+        # >>> =========   3. (Optional) Save to file   =========== <<<
         if save:
             shapecone_survey_tb = Table(shapecone_survey)
             shapecone_survey_tb.write(self.shear_ofmt.format(icosmo))
