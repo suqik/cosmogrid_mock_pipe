@@ -178,7 +178,7 @@ class GGLCalculator:
             esd_kwargs = {'random_subtraction': False}
 
         jk_cov = jackknife_resampling(excess_surface_density, 
-                                      lens_table, table_r=rand_table, **esd_kwargs)
+                                      lens_table, **esd_kwargs)
         
         return jk_cov
 
