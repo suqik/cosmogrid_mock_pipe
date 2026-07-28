@@ -108,29 +108,6 @@ class SurveyData:
                    g1_pure=g1_pure, 
                    g2_pure=g2_pure,
                    tomo=tomo, survey=survey)
-    
-    # def apply_indexing_cut(self, indexing: ArrayLike, in_place=False):
-    #     ''' 
-    #     apply indexing cut. 
-    #     '''
-
-    #     if in_place:
-    #         for iattr in self.colnames:
-    #             ival = getattr(self, iattr)
-    #             setattr(self, iattr, ival[indexing])
-    #         return None
-        
-    #     else:
-    #         cutted_attrs = {}
-    #         for iattr in self.colnames:
-    #             ival = getattr(self, iattr)
-    #             cutted_attrs[iattr] = ival[indexing]
-            
-    #         ra = cutted_attrs.pop("ra")
-    #         dec = cutted_attrs.pop("dec")
-    #         z = cutted_attrs.pop("z")
-
-    #         return self.__class__(ra=ra, dec=dec, z=z, **cutted_attrs)
 
     def apply_condition_cut(self, cond:str):
         ''' 
@@ -139,11 +116,6 @@ class SurveyData:
 
         indexing = eval(cond, self.__dict__)
         return self[indexing]
-
-    #     if in_place:
-    #         self.apply_indexing_cut(indexing, in_place)
-    #     else:
-    #         return self.apply_indexing_cut(indexing, in_place)
 
     def to_astropy_table(self):
         table = Table()
@@ -163,11 +135,6 @@ class SurveyData:
     def match_to_reference(self, ref_cat:"SurveyData", nside=64, in_place=False):
         matched_indexing = self._get_matched_indexing(ref_cat, nside=nside)
         return self[matched_indexing]
-    
-        # if in_place:
-        #     self.apply_indexing_cut(matched_indexing, in_place=in_place)
-        # else:
-        #     return self.apply_indexing_cut(matched_indexing, in_place=in_place)
         
     def _get_matched_indexing(self, ref_cat:"SurveyData", nside=64):
         ### make occupation maps for foreground and background catalogs
@@ -183,36 +150,3 @@ class SurveyData:
         matched_indexing = np.isin(target_pix, selected_pix)
         
         return matched_indexing
-
-    # def _compute_indices(self, data, x_edges, y_edges):
-    #     ix = np.digitize(data[:, 0], x_edges) - 1
-    #     iy = np.digitize(data[:, 1], y_edges) - 1
-    #     return ix, iy
-    
-    # def _valid_mask(self, ix, iy, n_x, n_y):
-    #     return (ix >= 0) & (ix < n_x) & (iy >= 0) & (iy < n_y)
-    
-    # def _get_matched_indexing(self, ref_cat:"SurveyData", nside_x=64, nside_y=64):
-    #     ref_xy = np.vstack([ref_cat.ra, ref_cat.dec]).T
-    #     match_xy = np.vstack([self.ra, self.dec]).T
-
-    #     all_points = np.vstack([ref_xy, match_xy])
-    #     xmin, ymin = np.min(all_points, axis=0)
-    #     xmax, ymax = np.max(all_points, axis=0)
-
-    #     x_edges = np.linspace(xmin, xmax, nside_x + 1)
-    #     y_edges = np.linspace(ymin, ymax, nside_y + 1)
-
-    #     ref_ix, ref_iy = self._compute_indices(ref_xy, x_edges, y_edges)
-    #     match_ix, match_iy = self._compute_indices(match_xy, x_edges, y_edges)
-
-    #     ref_mask = self._valid_mask(ref_ix, ref_iy, nside_x, nside_y)
-    #     match_mask = self._valid_mask(match_ix, match_iy, nside_x, nside_y)
-
-    #     ref_cells = set(zip(ref_ix[ref_mask], ref_iy[ref_mask]))
-    #     match_cells = set(zip(match_ix[match_mask], match_iy[match_mask]))
-    #     common_cells = ref_cells & match_cells
-
-    #     match_selected = [i for i, (ix, iy) in enumerate(zip(match_ix, match_iy)) if (ix, iy) in common_cells]
-
-    #     return match_selected

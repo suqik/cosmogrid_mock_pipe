@@ -35,7 +35,7 @@ class GGLCalculator:
         cosmology = FlatwCDM(H0=H0, Om0=Om0, w0=w0)
         return cosmology
     
-    def _get_rps_mpc(self, hubble):
+    def _rps_to_mpc(self, hubble, Rvoid_mpch=1.0):
         rp_unit = self.config.rp_unit
         rp_min_ori = self.config.rp_min
         rp_max_ori = self.config.rp_max
@@ -53,16 +53,33 @@ class GGLCalculator:
                 factor = 1e3
             case 'gpc_h':
                 factor = 1e3 / hubble
+            case 'rv':
+                factor = Rvoid_mpch / hubble
 
         rp_min_mpc = rp_min_ori * factor
         rp_max_mpc = rp_max_ori * factor
         
         return rp_min_mpc, rp_max_mpc
     
-    def _gen_rp_bins(self, hubble):
+    # def _gen_rp_bins(self, hubble):
+    #     rp_bins = self.config.rp_bins
+    #     bin_type = self.config.bin_type
+    #     rp_min_mpc, rp_max_mpc = self._get_rps_mpc(hubble)
+
+    #     if bin_type == "linear":
+    #         bin_edges = np.linspace(rp_min_mpc, rp_max_mpc, rp_bins+1)
+    #         # bin_ctrs = 0.5 * (bin_edges[1:] + bin_edges[:-1])
+        
+    #     if bin_type == "log":
+    #         bin_edges = np.geomspace(rp_min_mpc, rp_max_mpc, rp_bins+1)
+    #         # bin_ctrs = np.sqrt(bin_edges[1:] * bin_edges[:-1])
+    
+    #     return bin_edges
+    
+    def get_bin_edges(self, hubble, Rvoid_mpch=1.0):
         rp_bins = self.config.rp_bins
         bin_type = self.config.bin_type
-        rp_min_mpc, rp_max_mpc = self._get_rps_mpc(hubble)
+        rp_min_mpc, rp_max_mpc = self._rps_to_mpc(hubble, Rvoid_mpch)
 
         if bin_type == "linear":
             bin_edges = np.linspace(rp_min_mpc, rp_max_mpc, rp_bins+1)
@@ -72,13 +89,6 @@ class GGLCalculator:
             bin_edges = np.geomspace(rp_min_mpc, rp_max_mpc, rp_bins+1)
             # bin_ctrs = np.sqrt(bin_edges[1:] * bin_edges[:-1])
     
-        return bin_edges
-    
-    def get_bin_edges(self, cosmology):
-
-        hubble = cosmology.H(0).value / 100
-        bin_edges = self._gen_rp_bins(hubble)
-
         return bin_edges
     
     def _convert_table_dtype(self, tb, dtype_tbc, dtype_target):
@@ -113,6 +123,7 @@ class GGLCalculator:
         return srcs_cat
     
     def mk_lens_cat(self, cat:SurveyData):
+        logger.info("Catalog size: {}".format(len(cat)))
         lens_cat = cat.to_astropy_table()
         lens_cat = self._convert_table_dtype(lens_cat, np.float32, np.double)
         lens_cat.rename_column('w', 'w_sys')
@@ -122,23 +133,21 @@ class GGLCalculator:
             lens_cat.rename_column('zrsd', 'z')
         return lens_cat
 
+    def get_Rv_mean_mpch(self, lens_cat:SurveyData):
+        self.Rv_mean_mpch = np.median(lens_cat.Rv)
+        return self.Rv_mean_mpch
+
     def compute_pairs(self, cosmo_dict:dict, 
-                lens_cat:SurveyData|Table, srcs_cat:SurveyData,
+                lens_table:Table, srcs_table:Table,
                 n_jobs=32):
         
         cosmology = self.get_cosmo(cosmo_dict)
-        rp_edges_mpc = self.get_bin_edges(cosmology)
-        
-        if isinstance(lens_cat, SurveyData):
-            logger.info("Foreground: {}".format(lens_cat.catsize))
-        if isinstance(lens_cat, Table):
-            logger.info("Foreground: {}".format(len(lens_cat)))
-
-
-        logger.info("Background: {}".format(srcs_cat.catsize))
-
-        lens_table = self.mk_lens_cat(lens_cat)
-        srcs_table = self.mk_srcs_cat(srcs_cat)
+        hubble = cosmology.H(0).value / 100
+        if self.config.rp_unit == "Rv":
+            self.Rv_mean_mpc = self.Rv_mean_mpch / hubble
+            rp_edges_mpc = self.get_bin_edges(hubble, self.Rv_mean_mpch)
+        else:
+            rp_edges_mpc = self.get_bin_edges(hubble)
 
         logger.info("Precomputing lens-source pairs")
         precompute(lens_table, srcs_table, rp_edges_mpc, 
@@ -160,6 +169,10 @@ class GGLCalculator:
                                     return_table=True,
                                     **esd_kwargs
                                     )
+
+        if self.config.rp_unit == "Rv":
+            esd['rp_min_Rv'] = esd['rp_min'] / self.Rv_mean_mpc
+            esd['rp_max_Rv'] = esd['rp_max'] / self.Rv_mean_mpc
         
         return esd
     
@@ -181,17 +194,3 @@ class GGLCalculator:
                                       lens_table, **esd_kwargs)
         
         return jk_cov
-
-        # if njk > 2:    
-        #     if logger is not None:
-        #         logger.info("Estimating jackknife errors")
-
-        #     esd_cov = jackknife_resampling(
-        #             excess_surface_density, 
-        #             lens_table,
-        #             return_table=False, 
-        #             **esd_kwargs)
-        
-        #     esd['ds_err'] = np.sqrt(np.diag(esd_cov))
-
-        #     return esd, esd_cov
