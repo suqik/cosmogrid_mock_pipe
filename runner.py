@@ -558,6 +558,11 @@ class FastPMRunner:
 
     def _get_halo_fname(self, icosmo: int) -> str:
         halo_fname = self.halo_fmt.format(icosmo, self.scale_factor)
+        if os.path.basename(halo_fname) != "out_0_wPID.list":
+            raise ValueError(
+                "FastPM halo catalog must be out_0_wPID.list: "
+                f"{halo_fname}"
+            )
         if not os.path.isfile(halo_fname):
             raise FileNotFoundError(
                 f"Parent-processed Rockstar catalog not found: {halo_fname}"

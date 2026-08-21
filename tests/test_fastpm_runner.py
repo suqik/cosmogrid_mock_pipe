@@ -134,3 +134,24 @@ class FastPMRunnerCoreTests(unittest.TestCase):
         path.write_text("#ID Mvir\n1 1e12\n")
         with self.assertRaisesRegex(ValueError, "PID"):
             self.runner._get_halo_fname(0)
+
+    def test_non_parent_processed_catalog_is_rejected_with_pid(self):
+        runner = runner_module.FastPMRunner(
+            config=self.config,
+            halo_fmt=str(
+                self.root
+                / "cosmo{:d}"
+                / "a_{:5.4f}"
+                / "rstar"
+                / "out_0.list"
+            ),
+            cosmo_par_fname=self.cosmo_file,
+            fore_mask_fnames_dict={"boss_veto": []},
+            fore_nofz_fnames_dict={},
+            fore_survey_labels_dict={},
+        )
+        path = self.root / "cosmo0" / "a_0.7692" / "rstar" / "out_0.list"
+        path.parent.mkdir(parents=True)
+        path.write_text("#ID PID\n1 -1\n")
+        with self.assertRaisesRegex(ValueError, "out_0_wPID.list"):
+            runner._get_halo_fname(0)
