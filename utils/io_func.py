@@ -177,6 +177,132 @@ def get_pkd_halo_attrs(fname:str, attrs:Union[str,list]=["pos", "mass"], Lbox:fl
 
     return outputs
 
+def get_rstar_halo_attrs(
+    fname: str,
+    attrs: Union[str, list] = [
+        "pos",
+        "vel",
+        "mass",
+        "rvir",
+        "rHalf",
+        "concentration",
+        "ID",
+        "PID",
+    ],
+    host_only: bool = False,
+) -> dict:
+    '''
+    Get halo attributes from a Rockstar ASCII ``out_*.list`` catalog.
+
+    Parameters:
+    ----------
+    fname: str
+        Input Rockstar halo catalog. The first line must contain the
+        commented Rockstar column header.
+    attrs: list or str
+        Attributes to extract. Special attributes are ``pos`` (Mpc/h),
+        ``vel`` (km/s), ``mass`` (Msun/h), ``rvir`` (Mpc/h), ``rHalf``
+        (Mpc/h), and ``concentration``. Rockstar column names such as
+        ``ID`` and ``PID`` can also be requested directly.
+    host_only: bool
+        If True, only return host halos, identified by ``PID == -1``.
+
+    Returns:
+    -------
+    outputs: dict
+        A dictionary containing the requested halo attributes.
+    '''
+    if isinstance(attrs, str):
+        attrs = [attrs]
+    else:
+        attrs = list(attrs)
+
+    with open(fname, "r") as catalog:
+        header = catalog.readline().strip()
+
+    if not header.startswith("#"):
+        raise ValueError("Rockstar catalog must start with a commented header")
+
+    column_names = header[1:].split()
+    column_indices = {name: idx for idx, name in enumerate(column_names)}
+    attribute_columns = {
+        "pos": ("X", "Y", "Z"),
+        "vel": ("VX", "VY", "VZ"),
+        "mass": ("Mvir",),
+        "rvir": ("Rvir",),
+        "rHalf": ("Halfmass_Radius",),
+        "concentration": ("Rvir", "Rs"),
+    }
+
+    requested_columns = []
+    for attr in attrs:
+        if attr in attribute_columns:
+            requested_columns.extend(attribute_columns[attr])
+        elif attr in column_indices:
+            requested_columns.append(attr)
+        else:
+            raise ValueError(f"{attr} does not exist in the Rockstar catalog")
+    if host_only:
+        requested_columns.append("PID")
+
+    missing_columns = [
+        name for name in requested_columns if name not in column_indices
+    ]
+    if missing_columns:
+        missing = ", ".join(sorted(set(missing_columns)))
+        raise ValueError(f"Rockstar catalog is missing required columns: {missing}")
+
+    selected_columns = sorted(
+        set(requested_columns), key=column_indices.__getitem__
+    )
+    integer_columns = {"ID", "DescID", "Np", "PID"}
+    dtype = np.dtype([
+        (
+            f"column_{column_indices[name]}",
+            "i8" if name in integer_columns else "f8",
+        )
+        for name in selected_columns
+    ])
+    halo = np.loadtxt(
+        fname,
+        comments="#",
+        usecols=[column_indices[name] for name in selected_columns],
+        dtype=dtype,
+        ndmin=1,
+    )
+
+    def get_column(name):
+        return halo[f"column_{column_indices[name]}"]
+
+    selection = get_column("PID") == -1 if host_only else slice(None)
+
+    outputs = {}
+    for attr in attrs:
+        if attr == "pos":
+            outputs[attr] = np.column_stack([
+                get_column(name)[selection] for name in attribute_columns[attr]
+            ])
+        elif attr == "vel":
+            outputs[attr] = np.column_stack([
+                get_column(name)[selection] for name in attribute_columns[attr]
+            ])
+        elif attr == "mass":
+            outputs[attr] = get_column("Mvir")[selection]
+        elif attr == "rvir":
+            outputs[attr] = get_column("Rvir")[selection] / 1_000.0
+        elif attr == "rHalf":
+            outputs[attr] = (
+                get_column("Halfmass_Radius")[selection] / 1_000.0
+            )
+        elif attr == "concentration":
+            outputs[attr] = (
+                get_column("Rvir")[selection] / get_column("Rs")[selection]
+            )
+        else:
+            outputs[attr] = get_column(attr)[selection]
+
+    return outputs
+
 def pkd_to_hod_type(pkd_infos:dict, cosmo:ccl.Cosmology, pmass:float, boxsize:float, redshift:float) -> UserSuppliedHaloCatalog:
     '''
     Transform the default PKDGrav3 halo format to HOD format.
@@ -231,6 +357,58 @@ def pkd_to_hod_type(pkd_infos:dict, cosmo:ccl.Cosmology, pmass:float, boxsize:fl
         halo_nfw_conc=halo_concs,  ### concentration of NFW
         halo_rhalf=halo_rhalf, ### half mass radius in Mpc/h
         halo_hostid=np.arange(num_halo)
+    )
+
+    return halo_cat
+
+def rstar_to_hod_type(
+    rstar_infos: dict,
+    pmass: float,
+    boxsize: float,
+    redshift: float,
+) -> UserSuppliedHaloCatalog:
+    '''
+    Transform Rockstar halo attributes to the Halotools HOD format.
+
+    Parameters:
+    ----------
+    rstar_infos: dict
+        Rockstar halo attributes returned by ``get_rstar_halo_attrs``.
+    pmass: float
+        Particle mass in Msun/h.
+    boxsize: float
+        Box size in Mpc/h.
+    redshift: float
+        Snapshot redshift.
+
+    Returns:
+    -------
+    halo_cat: UserSuppliedHaloCatalog
+        Halo catalog in HOD format.
+    '''
+    halo_pos = rstar_infos["pos"]
+    halo_vel = rstar_infos["vel"]
+    halo_ids = np.asarray(rstar_infos["ID"], dtype=np.int64)
+    halo_upids = np.asarray(rstar_infos["PID"], dtype=np.int64)
+    halo_hostids = np.where(halo_upids == -1, halo_ids, halo_upids)
+
+    halo_cat = UserSuppliedHaloCatalog(
+        redshift=redshift,
+        Lbox=boxsize,
+        particle_mass=pmass,
+        halo_upid=halo_upids,
+        halo_x=halo_pos[:, 0],
+        halo_y=halo_pos[:, 1],
+        halo_z=halo_pos[:, 2],
+        halo_vx=halo_vel[:, 0],
+        halo_vy=halo_vel[:, 1],
+        halo_vz=halo_vel[:, 2],
+        halo_id=halo_ids,
+        halo_rvir=rstar_infos["rvir"],
+        halo_mvir=rstar_infos["mass"],
+        halo_nfw_conc=rstar_infos["concentration"],
+        halo_rhalf=rstar_infos["rHalf"],
+        halo_hostid=halo_hostids,
     )
 
     return halo_cat

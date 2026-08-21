@@ -77,6 +77,53 @@ class CatalogLoader:
     def __init__(self, config:PipeConfig):
         self.config = config
 
+    def load_rstar_halocat(
+            self, halo_fname,
+            cosmo=None,
+            ofmt='hod', clean=True, host_only=True):
+        '''
+        Load a Rockstar halo catalog and optionally transfer it to HOD type.
+
+        The ``clean`` argument is retained for API compatibility with
+        ``load_pkd_halocat``; Rockstar halos are not filtered by ``rHalf``.
+        '''
+        Lbox = self.config.Lbox
+        redshift = self.config.redshift
+        Npart = self.config.Npart
+
+        print(f"Load Rockstar halo from file {halo_fname}")
+
+        rstar_halo_infos = get_rstar_halo_attrs(
+            halo_fname,
+            attrs=[
+                "pos",
+                "vel",
+                "mass",
+                "rvir",
+                "rHalf",
+                "concentration",
+                "ID",
+                "PID",
+            ],
+            host_only=host_only,
+        )
+
+        if ofmt == 'rstar':
+            return rstar_halo_infos
+
+        if ofmt == 'hod':
+            assert cosmo is not None
+            OmegaM = cosmo.omega_x(a=1.0, species='matter')
+            pmass = rhoc0*OmegaM*(Lbox/Npart)**3  # Msun/h
+            halocat = rstar_to_hod_type(
+                rstar_halo_infos,
+                pmass=pmass,
+                boxsize=Lbox,
+                redshift=redshift,
+            )
+
+            return halocat
+
     def load_pkd_halocat(self, halo_fname, 
                          cosmo=None,
                          ofmt='hod', clean=True):
