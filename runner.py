@@ -403,3 +403,179 @@ class CosmoGridRunner:
             del shapecone_survey_tb
         
         return shapecone_survey
+
+
+class FastPMRunner:
+    def __init__(
+            self, config: PipeConfig,
+            halo_fmt: str,
+            cosmo_par_fname: str,
+            fore_mask_fnames_dict: dict,
+            fore_nofz_fnames_dict: dict,
+            fore_survey_labels_dict: dict,
+            gal_ofmt: str = None,
+            void_ofmt: str = None):
+        self.config = config
+        self.halo_fmt = halo_fmt
+        self.cosmo_par_fname = str(cosmo_par_fname)
+        self.fore_survey_labels_dict = fore_survey_labels_dict
+        self.gal_ofmt = gal_ofmt
+        self.void_ofmt = void_ofmt
+        self.scale_factor = 1.0 / (1.0 + config.redshift)
+
+        if set(fore_survey_labels_dict) != set(fore_nofz_fnames_dict):
+            raise ValueError("foreground survey labels and n(z) keys must match")
+
+        fore_masks = self._prepare_fore_masks(fore_mask_fnames_dict)
+        fore_nofzs = self._prepare_fore_nofzs(fore_nofz_fnames_dict)
+        self.cata_loader = CatalogLoader(config=config)
+        self.hod_populator = HODPopulator(config=config)
+        self.survey_generator = SurveyGenerator(
+            config=config, masks=fore_masks, nofzs=fore_nofzs
+        )
+        self.void_finder = VoidFinder(config=config)
+
+    def _prepare_fore_masks(self, mask_fnames):
+        if "boss_veto" not in mask_fnames:
+            raise ValueError("fore_mask_fnames_dict must contain boss_veto")
+
+        survey_names = [name for name in mask_fnames if name != "boss_veto"]
+        have_boss = any("boss" in name for name in survey_names)
+        have_2dflens = any("2dflens" in name for name in survey_names)
+        masks = {}
+
+        if have_boss:
+            if not mask_fnames["boss_veto"]:
+                raise ValueError("Must provide BOSS veto mask files")
+            if any("lowze2_ngc" in name or "lowze3_ngc" in name
+                   for name in survey_names):
+                if "boss_lowz_ngc" not in survey_names:
+                    raise ValueError("Must provide LOWZ NGC geometry")
+            if any("lowze2_sgc" in name or "lowze3_sgc" in name
+                   for name in survey_names):
+                if "boss_lowz_sgc" not in survey_names:
+                    raise ValueError("Must provide LOWZ SGC geometry")
+            masks["boss_geom"] = {}
+            masks["boss_masks"] = [
+                pymangle.Mangle(path) for path in mask_fnames["boss_veto"]
+            ]
+
+        if have_2dflens:
+            masks["2dflens_geom"] = {}
+
+        for survey_name in survey_names:
+            if "boss" in survey_name:
+                masks["boss_geom"][survey_name] = pymangle.Mangle(
+                    mask_fnames[survey_name]
+                )
+            elif "2dflens" in survey_name:
+                masks["2dflens_geom"][survey_name] = loadFitsMaps(
+                    mask_fnames[survey_name]
+                )
+            else:
+                raise ValueError(
+                    f"Unsupported foreground mask: {survey_name}"
+                )
+        return masks
+
+    def _prepare_fore_nofzs(self, nofz_fnames):
+        nofz_info = {}
+        for survey_name, nofz_fname in nofz_fnames.items():
+            if "boss" in survey_name:
+                nofz = np.loadtxt(nofz_fname, usecols=(1, 2, 3, 5))
+            elif "2dflens" in survey_name:
+                nofz = np.loadtxt(nofz_fname, usecols=(1, 2, 3, 4))
+            else:
+                raise ValueError(
+                    f"Unsupported foreground n(z): {survey_name}"
+                )
+            nofz_info = make_nofz_info(
+                nofz_info,
+                survey_name,
+                np.append(nofz[:, 0], nofz[-1, 1]),
+                nofz[:, 3],
+                nofz[:, 2],
+            )
+
+        if "boss_cmass" in nofz_info:
+            nofz_info["boss_cmass"]["nz_ref"] *= 0.93
+        return nofz_info
+
+    def _get_cosmo_instance(self, icosmo: int, otype="ccl"):
+        with open(self.cosmo_par_fname, "r") as stream:
+            fixed_line = stream.readline().strip()
+            varying_line = stream.readline().strip()
+
+        if not fixed_line.startswith("#") or not varying_line.startswith("#"):
+            raise ValueError("FastPM cosmology file must start with two headers")
+
+        fixed = {}
+        for item in fixed_line[1:].split():
+            if "=" not in item:
+                raise ValueError("malformed fixed cosmology header")
+            name, value = item.split("=", 1)
+            fixed[name] = float(value)
+
+        varying_names = varying_line[1:].split()
+        required_fixed = {"hubble", "Omegab", "ns"}
+        required_varying = {"OmegaM", "S8"}
+        if not required_fixed.issubset(fixed):
+            raise ValueError("missing fixed FastPM cosmology parameters")
+        if not required_varying.issubset(varying_names):
+            raise ValueError("missing varying FastPM cosmology parameters")
+
+        rows = np.loadtxt(self.cosmo_par_fname, comments="#", ndmin=2)
+        if rows.shape[1] != len(varying_names):
+            raise ValueError("cosmology header and data column counts differ")
+        if icosmo < 0 or icosmo >= len(rows):
+            raise IndexError(f"cosmology label {icosmo} is out of range")
+
+        selected = dict(zip(varying_names, rows[icosmo]))
+        OmegaM = float(selected["OmegaM"])
+        if OmegaM <= fixed["Omegab"]:
+            raise ValueError("OmegaM must be larger than Omegab")
+
+        params = {
+            **fixed,
+            **{name: float(value) for name, value in selected.items()},
+            "Omega_c": OmegaM - fixed["Omegab"],
+            "sigma8": float(selected["S8"]) / np.sqrt(OmegaM / 0.3),
+        }
+        if otype == "dict":
+            return params
+        if otype == "ccl":
+            return ccl.Cosmology(
+                h=params["hubble"],
+                Omega_b=params["Omegab"],
+                Omega_c=params["Omega_c"],
+                sigma8=params["sigma8"],
+                n_s=params["ns"],
+                w0=-1.0,
+                wa=0.0,
+                m_nu=0.0,
+            )
+        raise NotImplementedError(f"Output type {otype} not implemented")
+
+    def _get_halo_fname(self, icosmo: int) -> str:
+        halo_fname = self.halo_fmt.format(icosmo, self.scale_factor)
+        if not os.path.isfile(halo_fname):
+            raise FileNotFoundError(
+                f"Parent-processed Rockstar catalog not found: {halo_fname}"
+            )
+        with open(halo_fname, "r") as stream:
+            columns = stream.readline().lstrip("#").split()
+        if "PID" not in columns:
+            raise ValueError(f"Rockstar catalog has no PID column: {halo_fname}")
+        return halo_fname
+
+    def _get_sampling_seed_offset(self, icosmo, irlz):
+        return icosmo * self.config.nrlzs_per_cosmo + irlz
+
+    def _get_hod_seed_offset(self, icosmo, irlz, ihod):
+        return (
+            icosmo
+            * self.config.nrlzs_per_cosmo
+            * self.config.nhod_per_cosmo
+            + irlz * self.config.nhod_per_cosmo
+            + ihod
+        )
