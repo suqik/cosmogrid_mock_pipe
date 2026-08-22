@@ -661,3 +661,42 @@ class FastPMRunner:
         if save:
             Table(result).write(self.gal_ofmt.format(icosmo, irlz, ihod))
         return result
+
+    def gen_mock_void(self, icosmo, irlz, ihod, galcone_survey,
+                      dive_input, dive_output, save=False):
+        if save and self.void_ofmt is None:
+            raise ValueError("void_ofmt is required when save=True")
+
+        cosmo = self._get_cosmo_instance(icosmo, otype="ccl")
+        survey_catalogs = []
+        for survey_name, survey_label in self.fore_survey_labels_dict.items():
+            selected = galcone_survey[galcone_survey["survey"] == survey_label]
+            if len(selected) == 0:
+                continue
+            voids = self.void_finder.galcone_to_voidcone(
+                selected,
+                cosmo,
+                survey=survey_label,
+                dive_input=dive_input,
+                dive_output=dive_output,
+            )
+            redshift_cut = (
+                (voids["z"] >= self.config.zmin_lightcone)
+                & (voids["z"] <= self.config.zmax_lightcone)
+            )
+            generator = self._pick_gen_mock_func(survey_name)
+            survey_catalogs.append(
+                generator(
+                    voids[redshift_cut],
+                    survey_name,
+                    survey_label,
+                    make_nz=False,
+                )
+            )
+        if not survey_catalogs:
+            raise ValueError("No non-empty foreground surveys in galaxy catalog")
+        result = np.concatenate(survey_catalogs)
+
+        if save:
+            Table(result).write(self.void_ofmt.format(icosmo, irlz, ihod))
+        return result

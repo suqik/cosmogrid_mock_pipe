@@ -61,6 +61,26 @@ class GalaxySurveyGenerator:
         return result
 
 
+class FakeVoidFinder:
+    def galcone_to_voidcone(
+            self, galcone, cosmo, survey, dive_input, dive_output):
+        result = np.zeros(
+            2,
+            dtype=[("z", "f8"), ("survey", "i4"), ("marker", "i4")],
+        )
+        result["z"] = [0.2, 1.2]
+        result["survey"] = survey
+        result["marker"] = [1, 2]
+        return result
+
+
+class VoidSurveyGenerator:
+    def gen_boss_like(self, voids, survey_name, survey_label, make_nz=True):
+        result = voids.copy()
+        result["survey"] = survey_label
+        return result
+
+
 class FastPMRunnerCoreTests(unittest.TestCase):
     def setUp(self):
         self.assertTrue(
@@ -261,6 +281,42 @@ class FastPMRunnerCoreTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "gal_ofmt"):
             self.runner.gen_mock_gal(0, 0, 0, np.ones(6), save=True)
+
+    def test_gen_mock_void_filters_redshift_and_preserves_survey(self):
+        self.assertTrue(
+            hasattr(self.runner, "gen_mock_void"),
+            "FastPMRunner.gen_mock_void must be implemented",
+        )
+        self.runner.config.zmin_lightcone = 0.0
+        self.runner.config.zmax_lightcone = 1.0
+        self.runner.fore_survey_labels_dict = {"boss_lowz_ngc": 7}
+        self.runner.void_finder = FakeVoidFinder()
+        self.runner.survey_generator = VoidSurveyGenerator()
+        galaxies = np.zeros(1, dtype=[("survey", "i4")])
+        galaxies["survey"] = 7
+        result = self.runner.gen_mock_void(
+            icosmo=0,
+            irlz=2,
+            ihod=3,
+            galcone_survey=galaxies,
+            dive_input="input.dat",
+            dive_output="output.dat",
+            save=False,
+        )
+        self.assertEqual(len(result), 1)
+        np.testing.assert_allclose(result["z"], [0.2])
+        np.testing.assert_array_equal(result["survey"], [7])
+
+    def test_gen_mock_void_requires_output_format_when_saving(self):
+        self.assertTrue(
+            hasattr(self.runner, "gen_mock_void"),
+            "FastPMRunner.gen_mock_void must be implemented",
+        )
+        galaxies = np.zeros(1, dtype=[("survey", "i4")])
+        with self.assertRaisesRegex(ValueError, "void_ofmt"):
+            self.runner.gen_mock_void(
+                0, 0, 0, galaxies, "input", "output", save=True
+            )
 
     def test_unsupported_foreground_survey_is_rejected(self):
         self.assertTrue(
