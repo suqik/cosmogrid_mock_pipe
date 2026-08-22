@@ -603,3 +603,61 @@ class FastPMRunner:
             + irlz * self.config.nhod_per_cosmo
             + ihod
         )
+
+    def _make_hod_param_dict(self, hod_param):
+        return dict(zip(self.config.model_params_names, hod_param))
+
+    def _gsample_dict_to_array(self, dict_of_gsamples):
+        return dict_of_gsamples[next(iter(dict_of_gsamples))]
+
+    def _pick_gen_mock_func(self, survey_name):
+        boss_like = {
+            "boss_lowz_ngc", "boss_cmass_ngc",
+            "boss_lowz_sgc", "boss_cmass_sgc",
+        }
+        boss_trim = {
+            "boss_lowze2_ngc", "boss_lowze3_ngc",
+            "boss_lowze2_sgc", "boss_lowze3_sgc",
+        }
+        if survey_name in boss_like:
+            return self.survey_generator.gen_boss_like
+        if survey_name in boss_trim:
+            return self.survey_generator.gen_boss_like_trim
+        if survey_name == "2dflens_south":
+            return self.survey_generator.gen_2dflens_like
+        raise ValueError(f"Unsupported foreground survey: {survey_name}")
+
+    def gen_mock_gal(self, icosmo, irlz, ihod, ihod_param: np.ndarray,
+                     save=False):
+        if save and self.gal_ofmt is None:
+            raise ValueError("gal_ofmt is required when save=True")
+
+        cosmo, halo_catalog = self._load_hod_halocat(icosmo)
+        OmegaM = cosmo.omega_x(a=1.0, species="matter")
+        model_params = self._make_hod_param_dict(ihod_param)
+        seed_offset = self._get_hod_seed_offset(icosmo, irlz, ihod)
+        samples = self.hod_populator.populate_galaxies(
+            halo_catalog,
+            model_params,
+            indx=seed_offset,
+            OmegaM=OmegaM,
+        )
+        galaxies = self._gsample_dict_to_array(samples)
+        gal_pos, gal_vel = self.hod_populator.get_galaxy_features(
+            galaxies, features=["pos", "vel"]
+        )
+        fullsky = self.survey_generator.box_to_lightcone(
+            cosmo, gal_pos=gal_pos, gal_adj_props={"gal_vel": gal_vel}
+        )
+
+        survey_catalogs = []
+        for survey_name, survey_label in self.fore_survey_labels_dict.items():
+            generator = self._pick_gen_mock_func(survey_name)
+            survey_catalogs.append(generator(fullsky, survey_name, survey_label))
+        if not survey_catalogs:
+            raise ValueError("No foreground surveys configured")
+        result = np.concatenate(survey_catalogs)
+
+        if save:
+            Table(result).write(self.gal_ofmt.format(icosmo, irlz, ihod))
+        return result

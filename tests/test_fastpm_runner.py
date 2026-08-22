@@ -30,6 +30,37 @@ class SamplingHODPopulator:
         }
 
 
+class GalaxyHODPopulator:
+    def populate_galaxies(self, halo_catalog, model_params_dict, indx, OmegaM):
+        galaxies = np.zeros(
+            1,
+            dtype=[
+                ("x", "f8"), ("y", "f8"), ("z", "f8"),
+                ("vx", "f8"), ("vy", "f8"), ("vz", "f8"),
+            ],
+        )
+        galaxies["x"] = indx
+        galaxies["vx"] = OmegaM
+        return {"dummy": galaxies}
+
+    def get_galaxy_features(self, galaxies, features):
+        pos = np.column_stack([galaxies["x"], galaxies["y"], galaxies["z"]])
+        vel = np.column_stack([galaxies["vx"], galaxies["vy"], galaxies["vz"]])
+        return pos, vel
+
+
+class GalaxySurveyGenerator:
+    def box_to_lightcone(self, cosmo, gal_pos, gal_adj_props):
+        result = np.zeros(1, dtype=[("marker", "f8"), ("survey", "i4")])
+        result["marker"] = gal_pos[0, 0] + gal_adj_props["gal_vel"][0, 0]
+        return result
+
+    def gen_boss_like(self, galcone, survey_name, survey_label, make_nz=True):
+        result = galcone.copy()
+        result["survey"] = survey_label
+        return result
+
+
 class FastPMRunnerCoreTests(unittest.TestCase):
     def setUp(self):
         self.assertTrue(
@@ -202,3 +233,39 @@ class FastPMRunnerCoreTests(unittest.TestCase):
         self.runner.hod_populator = SamplingHODPopulator()
         result = self.runner.sample_hod_params(0, irlz=3)
         self.assertEqual(result, {"halo_count": 1, "seed_offset": 3})
+
+    def test_gen_mock_gal_returns_survey_catalog_with_fastpm_seed(self):
+        self.assertTrue(
+            hasattr(self.runner, "gen_mock_gal"),
+            "FastPMRunner.gen_mock_gal must be implemented",
+        )
+        self.write_rstar_catalog()
+        self.runner.fore_survey_labels_dict = {"boss_lowz_ngc": 7}
+        self.runner.hod_populator = GalaxyHODPopulator()
+        self.runner.survey_generator = GalaxySurveyGenerator()
+        result = self.runner.gen_mock_gal(
+            icosmo=0,
+            irlz=2,
+            ihod=3,
+            ihod_param=np.array([13.2, 0.3, 14.0, 1.0, 0.8, 1.0]),
+            save=False,
+        )
+        self.assertEqual(len(result), 1)
+        np.testing.assert_array_equal(result["survey"], [7])
+        self.assertAlmostEqual(result["marker"][0], 23.200614)
+
+    def test_gen_mock_gal_requires_output_format_when_saving(self):
+        self.assertTrue(
+            hasattr(self.runner, "gen_mock_gal"),
+            "FastPMRunner.gen_mock_gal must be implemented",
+        )
+        with self.assertRaisesRegex(ValueError, "gal_ofmt"):
+            self.runner.gen_mock_gal(0, 0, 0, np.ones(6), save=True)
+
+    def test_unsupported_foreground_survey_is_rejected(self):
+        self.assertTrue(
+            hasattr(self.runner, "_pick_gen_mock_func"),
+            "FastPMRunner._pick_gen_mock_func must be implemented",
+        )
+        with self.assertRaisesRegex(ValueError, "unknown"):
+            self.runner._pick_gen_mock_func("unknown")
