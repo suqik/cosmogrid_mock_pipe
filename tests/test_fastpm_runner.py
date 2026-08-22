@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 import numpy as np
+from astropy.table import Table
 from halotools.sim_manager import UserSuppliedHaloCatalog
 
 from handler import PipeConfig
@@ -195,6 +196,42 @@ class FastPMRunnerCoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "varying"):
             self.runner._get_cosmo_instance(0)
 
+    def test_cosmology_file_without_two_headers_is_rejected(self):
+        self.cosmo_file.write_text(
+            "hubble=0.6727 Omegab=0.0491 ns=0.9667\n"
+            "# OmegaM S8\n"
+            "0.200614 0.842526\n"
+        )
+        with self.assertRaisesRegex(ValueError, "two headers"):
+            self.runner._get_cosmo_instance(0)
+
+    def test_malformed_fixed_cosmology_header_is_rejected(self):
+        self.cosmo_file.write_text(
+            "# hubble=0.6727 Omegab=0.0491 ns\n"
+            "# OmegaM S8\n"
+            "0.200614 0.842526\n"
+        )
+        with self.assertRaisesRegex(ValueError, "malformed fixed"):
+            self.runner._get_cosmo_instance(0)
+
+    def test_missing_fixed_cosmology_parameter_is_rejected(self):
+        self.cosmo_file.write_text(
+            "# hubble=0.6727 Omegab=0.0491\n"
+            "# OmegaM S8\n"
+            "0.200614 0.842526\n"
+        )
+        with self.assertRaisesRegex(ValueError, "missing fixed"):
+            self.runner._get_cosmo_instance(0)
+
+    def test_cosmology_header_and_data_column_mismatch_is_rejected(self):
+        self.cosmo_file.write_text(
+            "# hubble=0.6727 Omegab=0.0491 ns=0.9667\n"
+            "# OmegaM S8 w0\n"
+            "0.200614 0.842526\n"
+        )
+        with self.assertRaisesRegex(ValueError, "column counts"):
+            self.runner._get_cosmo_instance(0)
+
     def test_missing_parent_catalog_is_rejected(self):
         with self.assertRaisesRegex(FileNotFoundError, "out_0_wPID"):
             self.runner._get_halo_fname(0)
@@ -282,6 +319,29 @@ class FastPMRunnerCoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "gal_ofmt"):
             self.runner.gen_mock_gal(0, 0, 0, np.ones(6), save=True)
 
+    def test_gen_mock_gal_saves_astropy_readable_catalog(self):
+        self.write_rstar_catalog()
+        output = self.root / "gal_0_2_3.fits"
+        self.runner.gal_ofmt = str(self.root / "gal_{:d}_{:d}_{:d}.fits")
+        self.runner.fore_survey_labels_dict = {"boss_lowz_ngc": 7}
+        self.runner.hod_populator = GalaxyHODPopulator()
+        self.runner.survey_generator = GalaxySurveyGenerator()
+
+        result = self.runner.gen_mock_gal(
+            icosmo=0,
+            irlz=2,
+            ihod=3,
+            ihod_param=np.array([13.2, 0.3, 14.0, 1.0, 0.8, 1.0]),
+            save=True,
+        )
+
+        self.assertTrue(output.is_file())
+        saved = Table.read(output)
+        self.assertEqual(saved.colnames, ["marker", "survey"])
+        np.testing.assert_allclose(saved["marker"], [23.200614])
+        np.testing.assert_array_equal(saved["survey"], [7])
+        np.testing.assert_array_equal(saved.as_array(), result)
+
     def test_gen_mock_void_filters_redshift_and_preserves_survey(self):
         self.assertTrue(
             hasattr(self.runner, "gen_mock_void"),
@@ -317,6 +377,35 @@ class FastPMRunnerCoreTests(unittest.TestCase):
             self.runner.gen_mock_void(
                 0, 0, 0, galaxies, "input", "output", save=True
             )
+
+    def test_gen_mock_void_saves_astropy_readable_catalog(self):
+        self.runner.config.zmin_lightcone = 0.0
+        self.runner.config.zmax_lightcone = 1.0
+        output = self.root / "void_0_2_3.fits"
+        self.runner.void_ofmt = str(self.root / "void_{:d}_{:d}_{:d}.fits")
+        self.runner.fore_survey_labels_dict = {"boss_lowz_ngc": 7}
+        self.runner.void_finder = FakeVoidFinder()
+        self.runner.survey_generator = VoidSurveyGenerator()
+        galaxies = np.zeros(1, dtype=[("survey", "i4")])
+        galaxies["survey"] = 7
+
+        result = self.runner.gen_mock_void(
+            icosmo=0,
+            irlz=2,
+            ihod=3,
+            galcone_survey=galaxies,
+            dive_input="input.dat",
+            dive_output="output.dat",
+            save=True,
+        )
+
+        self.assertTrue(output.is_file())
+        saved = Table.read(output)
+        self.assertEqual(saved.colnames, ["z", "survey", "marker"])
+        np.testing.assert_allclose(saved["z"], [0.2])
+        np.testing.assert_array_equal(saved["survey"], [7])
+        np.testing.assert_array_equal(saved["marker"], [1])
+        np.testing.assert_array_equal(saved.as_array(), result)
 
     def test_unsupported_foreground_survey_is_rejected(self):
         self.assertTrue(

@@ -67,7 +67,7 @@ test -f "$rockstar_source_dir/Makefile"
 
 Expected: all commands exit 0 and `$rockstar_source_dir/Makefile` exists.
 
-- [ ] **Step 3: Compile `find_parents`**
+- [ ] **Step 3: Compile `util/find_parents`**
 
 Run:
 
@@ -75,7 +75,7 @@ Run:
 set -euo pipefail
 rockstar_source_dir=/private/tmp/cosmogrid-rockstar-parents-20260821
 make -C "$rockstar_source_dir" parents
-test -x "$rockstar_source_dir/find_parents"
+test -x "$rockstar_source_dir/util/find_parents"
 ```
 
 Expected: both commands exit 0.
@@ -90,12 +90,12 @@ raw_halo=/Users/suqikuai777/Dataspace/FastPM/Cosmology/L1000_N1024_1000cosmo/cos
 processed_halo=/Users/suqikuai777/Dataspace/FastPM/Cosmology/L1000_N1024_1000cosmo/cosmo0/a_0.7692/rstar/out_0_wPID.list
 rockstar_source_dir=/private/tmp/cosmogrid-rockstar-parents-20260821
 temporary_processed="$(mktemp "${processed_halo}.tmp.XXXXXX")"
-"$rockstar_source_dir/find_parents" "$raw_halo" 1000 > "$temporary_processed"
+"$rockstar_source_dir/util/find_parents" "$raw_halo" 1000 > "$temporary_processed"
 test ! -e "$processed_halo"
 mv "$temporary_processed" "$processed_halo"
 ```
 
-Expected: `find_parents` and both safety checks exit 0; the final move is atomic on completion.
+Expected: `util/find_parents` and both safety checks exit 0; the final move is atomic on completion.
 
 - [ ] **Step 5: Validate output schema and row counts**
 
