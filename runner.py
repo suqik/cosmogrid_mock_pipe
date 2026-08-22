@@ -576,6 +576,25 @@ class FastPMRunner:
     def _get_sampling_seed_offset(self, icosmo, irlz):
         return icosmo * self.config.nrlzs_per_cosmo + irlz
 
+    def _load_hod_halocat(self, icosmo):
+        cosmo = self._get_cosmo_instance(icosmo, otype="ccl")
+        halo_fname = self._get_halo_fname(icosmo)
+        halo_catalog = self.cata_loader.load_rstar_halocat(
+            halo_fname,
+            cosmo=cosmo,
+            ofmt="hod",
+            clean=False,
+            host_only=True,
+        )
+        return cosmo, halo_catalog
+
+    def sample_hod_params(self, icosmo, irlz=0):
+        _, halo_catalog = self._load_hod_halocat(icosmo)
+        return self.hod_populator.find_hod_params(
+            halo_catalog,
+            seed_offset=self._get_sampling_seed_offset(icosmo, irlz),
+        )
+
     def _get_hod_seed_offset(self, icosmo, irlz, ihod):
         return (
             icosmo

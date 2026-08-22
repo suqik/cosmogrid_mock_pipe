@@ -22,6 +22,14 @@ RSTAR_SUBHALO_ROW = (
 )
 
 
+class SamplingHODPopulator:
+    def find_hod_params(self, halo_catalog, seed_offset):
+        return {
+            "halo_count": len(halo_catalog.halo_table),
+            "seed_offset": seed_offset,
+        }
+
+
 class FastPMRunnerCoreTests(unittest.TestCase):
     def setUp(self):
         self.assertTrue(
@@ -56,6 +64,18 @@ class FastPMRunnerCoreTests(unittest.TestCase):
 
     def tearDown(self):
         self.tempdir.cleanup()
+
+    def write_rstar_catalog(self, icosmo=0):
+        path = (
+            self.root
+            / f"cosmo{icosmo}"
+            / "a_0.7692"
+            / "rstar"
+            / "out_0_wPID.list"
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(RSTAR_HEADER + RSTAR_HOST_ROW + RSTAR_SUBHALO_ROW)
+        return path
 
     def test_cosmo0_parses_fixed_and_varying_parameters(self):
         result = self.runner._get_cosmo_instance(0, otype="dict")
@@ -155,3 +175,30 @@ class FastPMRunnerCoreTests(unittest.TestCase):
         path.write_text("#ID PID\n1 -1\n")
         with self.assertRaisesRegex(ValueError, "out_0_wPID.list"):
             runner._get_halo_fname(0)
+
+    def test_load_hod_halocat_uses_only_hosts_without_rhalf_cut(self):
+        self.assertTrue(
+            hasattr(self.runner, "_load_hod_halocat"),
+            "FastPMRunner._load_hod_halocat must be implemented",
+        )
+        self.write_rstar_catalog()
+        cosmo, catalog = self.runner._load_hod_halocat(0)
+        table = catalog.halo_table
+        params = cosmo.to_dict()
+        self.assertAlmostEqual(params["Omega_c"] + params["Omega_b"], 0.200614)
+        self.assertIsInstance(catalog, UserSuppliedHaloCatalog)
+        self.assertEqual(len(table), 1)
+        np.testing.assert_array_equal(table["halo_id"], [10])
+        np.testing.assert_array_equal(table["halo_upid"], [-1])
+        np.testing.assert_allclose(table["halo_rhalf"], [0.05])
+        np.testing.assert_allclose(table["halo_nfw_conc"], [5.0])
+
+    def test_sample_hod_params_uses_realization_seed_and_host_catalog(self):
+        self.assertTrue(
+            hasattr(self.runner, "sample_hod_params"),
+            "FastPMRunner.sample_hod_params must be implemented",
+        )
+        self.write_rstar_catalog()
+        self.runner.hod_populator = SamplingHODPopulator()
+        result = self.runner.sample_hod_params(0, irlz=3)
+        self.assertEqual(result, {"halo_count": 1, "seed_offset": 3})
