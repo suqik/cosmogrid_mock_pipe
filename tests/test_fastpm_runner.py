@@ -1,8 +1,13 @@
+import gc
+import json
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
+from astropy.io import fits
 from astropy.table import Table
 from halotools.sim_manager import UserSuppliedHaloCatalog
 
@@ -82,6 +87,38 @@ class VoidSurveyGenerator:
         return result
 
 
+class FakeShearAssigner:
+    def __init__(self, redshifts=(0.2,)):
+        self.redshifts = np.asarray(redshifts)
+
+    def gen_gal_positions(self, ngal, survey_name, tomo_label, survey_label):
+        result = np.zeros(
+            len(self.redshifts),
+            dtype=[
+                ("survey", "i4"),
+                ("tomo", "i4"),
+                ("ngal", "f8"),
+                ("z_true", "f8"),
+                ("g1", "f8"),
+                ("map_count", "i4"),
+            ],
+        )
+        result["survey"] = survey_label
+        result["tomo"] = tomo_label
+        result["ngal"] = ngal
+        result["z_true"] = self.redshifts
+        return result
+
+    def assign_shear(self, catalog, shear_maps):
+        result = catalog.copy()
+        result["g1"] = shear_maps["shell0"]["gamma1"][0]
+        result["map_count"] = len(shear_maps)
+        return result
+
+    def assign_weights(self, catalog, weight_type):
+        return catalog
+
+
 class FastPMRunnerCoreTests(unittest.TestCase):
     def setUp(self):
         self.assertTrue(
@@ -128,6 +165,98 @@ class FastPMRunnerCoreTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(RSTAR_HEADER + RSTAR_HOST_ROW + RSTAR_SUBHALO_ROW)
         return path
+
+    def write_shear_product(
+            self, icosmo=0, irlz=0,
+            metadata_icosmo=None, metadata_irlz=None,
+            ordering="RING", coordinate_system="C",
+            map_size=12, include_near_gamma2=True,
+            cosmology_overrides=None,
+            near_redshift=0.2, far_redshift=0.8,
+            omit_near_redshift=False):
+        path = (
+            self.root
+            / "products"
+            / f"cosmo_{icosmo:06d}"
+            / f"realization_{irlz:04d}.npz"
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if metadata_icosmo is None:
+            metadata_icosmo = icosmo
+        if metadata_irlz is None:
+            metadata_irlz = irlz
+        cosmologies = {
+            0: {
+                "OmegaM": 0.200614,
+                "S8": 0.842526,
+                "hubble": 0.6727,
+                "Omegab": 0.0491,
+                "ns": 0.9667,
+            },
+            1: {
+                "OmegaM": 0.306602,
+                "S8": 0.636991,
+                "hubble": 0.6727,
+                "Omegab": 0.0491,
+                "ns": 0.9667,
+            },
+        }
+        cosmology = dict(cosmologies[icosmo])
+        if cosmology_overrides is not None:
+            cosmology.update(cosmology_overrides)
+        near_metadata = (
+            {} if omit_near_redshift
+            else {"effective_redshift": near_redshift}
+        )
+        metadata = {
+            "cosmology_index": metadata_icosmo,
+            "realization_index": metadata_irlz,
+            "cosmology": cosmology,
+            "map": {
+                "coordinate_system": coordinate_system,
+                "ordering": ordering,
+                "nside": 1,
+            },
+            "sources": {
+                "source_far": {"effective_redshift": far_redshift},
+                "source_near": near_metadata,
+            },
+        }
+        payload = {
+            "source_far__gamma1": np.full(map_size, 8.0),
+            "source_far__gamma2": np.full(map_size, -8.0),
+            "source_far__kappa": np.full(map_size, 0.8),
+            "source_near__gamma1": np.full(map_size, 2.0),
+            "source_near__kappa": np.full(map_size, 0.2),
+            "metadata_json": np.asarray(json.dumps(metadata)),
+        }
+        if include_near_gamma2:
+            payload["source_near__gamma2"] = np.full(map_size, -2.0)
+        np.savez(path, **payload)
+        return path
+
+    def write_background_inputs(self):
+        mask_path = self.root / "background_mask.fits"
+        mask_hdu = fits.BinTableHDU.from_columns([
+            fits.Column(
+                name="VALUE",
+                format="12E",
+                array=np.ones((1, 12), dtype=np.float32),
+            )
+        ])
+        fits.HDUList([fits.PrimaryHDU(), mask_hdu]).writeto(mask_path)
+
+        nofz_path = self.root / "background_nz.txt"
+        np.savetxt(
+            nofz_path,
+            np.array([
+                [0.10, 0.0],
+                [0.20, 1.0],
+                [0.30, 1.0],
+                [0.40, 0.0],
+            ]),
+        )
+        return mask_path, nofz_path
 
     def test_cosmo0_parses_fixed_and_varying_parameters(self):
         result = self.runner._get_cosmo_instance(0, otype="dict")
@@ -414,3 +543,319 @@ class FastPMRunnerCoreTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "unknown"):
             self.runner._pick_gen_mock_func("unknown")
+
+    def test_load_shear_maps_uses_cosmology_realization_and_redshift_order(self):
+        self.assertTrue(
+            hasattr(self.runner, "_load_shear_maps"),
+            "FastPMRunner._load_shear_maps must be implemented",
+        )
+        self.write_shear_product(icosmo=1, irlz=2)
+        self.runner.shear_sim_fmt = str(
+            self.root
+            / "products"
+            / "cosmo_{:06d}"
+            / "realization_{:04d}.npz"
+        )
+
+        result = self.runner._load_shear_maps(icosmo=1, irlz=2)
+
+        self.assertEqual(list(result), ["shell0", "shell1"])
+        self.assertEqual(result["shell0"]["redshift"], 0.2)
+        self.assertEqual(result["shell1"]["redshift"], 0.8)
+        np.testing.assert_array_equal(result["shell0"]["gamma1"], [2.0] * 12)
+        np.testing.assert_array_equal(result["shell1"]["gamma2"], [-8.0] * 12)
+
+    def test_load_shear_maps_rejects_mismatched_product_identity(self):
+        self.write_shear_product(
+            icosmo=1,
+            irlz=2,
+            metadata_icosmo=4,
+            metadata_irlz=7,
+        )
+        self.runner.shear_sim_fmt = str(
+            self.root
+            / "products"
+            / "cosmo_{:06d}"
+            / "realization_{:04d}.npz"
+        )
+
+        with self.assertRaisesRegex(ValueError, "cosmology_index"):
+            self.runner._load_shear_maps(icosmo=1, irlz=2)
+
+    def test_load_shear_maps_rejects_mismatched_cosmology_parameters(self):
+        self.write_shear_product(
+            icosmo=0,
+            irlz=0,
+            cosmology_overrides={"OmegaM": 0.9},
+        )
+        self.runner.shear_sim_fmt = str(
+            self.root
+            / "products"
+            / "cosmo_{:06d}"
+            / "realization_{:04d}.npz"
+        )
+
+        with self.assertRaisesRegex(ValueError, "OmegaM"):
+            self.runner._load_shear_maps(icosmo=0, irlz=0)
+
+    def test_load_shear_maps_rejects_incompatible_healpix_convention(self):
+        self.write_shear_product(
+            icosmo=1,
+            irlz=2,
+            ordering="NESTED",
+            coordinate_system="G",
+        )
+        self.runner.shear_sim_fmt = str(
+            self.root
+            / "products"
+            / "cosmo_{:06d}"
+            / "realization_{:04d}.npz"
+        )
+
+        with self.assertRaisesRegex(ValueError, "RING.*celestial"):
+            self.runner._load_shear_maps(icosmo=1, irlz=2)
+
+    def test_load_shear_maps_rejects_unpaired_gamma_components(self):
+        self.write_shear_product(
+            icosmo=1,
+            irlz=2,
+            include_near_gamma2=False,
+        )
+        self.runner.shear_sim_fmt = str(
+            self.root
+            / "products"
+            / "cosmo_{:06d}"
+            / "realization_{:04d}.npz"
+        )
+
+        try:
+            self.runner._load_shear_maps(icosmo=1, irlz=2)
+        except ValueError as error:
+            self.assertRegex(str(error), "gamma1.*gamma2")
+        except Exception as error:
+            self.fail(f"invalid gamma components need a clear ValueError: {error}")
+        else:
+            self.fail("unpaired gamma components must be rejected")
+
+    def test_load_shear_maps_rejects_invalid_healpix_array_size(self):
+        self.write_shear_product(icosmo=1, irlz=2, map_size=10)
+        self.runner.shear_sim_fmt = str(
+            self.root
+            / "products"
+            / "cosmo_{:06d}"
+            / "realization_{:04d}.npz"
+        )
+
+        with self.assertRaisesRegex(ValueError, "HEALPix"):
+            self.runner._load_shear_maps(icosmo=1, irlz=2)
+
+    def test_load_shear_maps_rejects_duplicate_source_redshifts(self):
+        self.write_shear_product(
+            icosmo=1,
+            irlz=2,
+            near_redshift=0.5,
+            far_redshift=0.5,
+        )
+        self.runner.shear_sim_fmt = str(
+            self.root
+            / "products"
+            / "cosmo_{:06d}"
+            / "realization_{:04d}.npz"
+        )
+
+        with self.assertRaisesRegex(ValueError, "strictly increasing"):
+            self.runner._load_shear_maps(icosmo=1, irlz=2)
+
+    def test_load_shear_maps_rejects_source_without_effective_redshift(self):
+        self.write_shear_product(
+            icosmo=1,
+            irlz=2,
+            omit_near_redshift=True,
+        )
+        self.runner.shear_sim_fmt = str(
+            self.root
+            / "products"
+            / "cosmo_{:06d}"
+            / "realization_{:04d}.npz"
+        )
+
+        try:
+            self.runner._load_shear_maps(icosmo=1, irlz=2)
+        except ValueError as error:
+            self.assertRegex(str(error), "source_near.*effective_redshift")
+        except Exception as error:
+            self.fail(f"invalid source metadata needs a clear ValueError: {error}")
+        else:
+            self.fail("missing effective_redshift must be rejected")
+
+    def test_gen_mock_shear_returns_and_saves_all_tomographic_catalogs(self):
+        self.assertTrue(
+            hasattr(self.runner, "gen_mock_shear"),
+            "FastPMRunner.gen_mock_shear must be implemented",
+        )
+        self.write_shear_product(icosmo=1, irlz=2)
+        self.runner.shear_sim_fmt = str(
+            self.root
+            / "products"
+            / "cosmo_{:06d}"
+            / "realization_{:04d}.npz"
+        )
+        self.runner.shear_ofmt = str(self.root / "shape_{:d}_{:d}.fits")
+        self.runner.back_survey_labels_dict = {"survey_a": 9}
+        self.runner.back_ngals_dict = {"tomo_low": 1.25, "tomo_high": 2.5}
+        self.runner.tomo_labels_dict = {"tomo_low": 1, "tomo_high": 2}
+        self.runner.shear_assigner = FakeShearAssigner()
+
+        result = self.runner.gen_mock_shear(icosmo=1, irlz=2, save=True)
+
+        np.testing.assert_array_equal(result["survey"], [9, 9])
+        np.testing.assert_array_equal(result["tomo"], [1, 2])
+        np.testing.assert_allclose(result["ngal"], [1.25, 2.5])
+        np.testing.assert_allclose(result["g1"], [2.0, 2.0])
+        np.testing.assert_array_equal(result["map_count"], [2, 2])
+        saved = Table.read(self.root / "shape_1_2.fits")
+        np.testing.assert_array_equal(saved.as_array(), result)
+
+    def test_gen_mock_shear_requires_shear_map_format(self):
+        try:
+            self.runner.gen_mock_shear(icosmo=0, irlz=0, save=False)
+        except ValueError as error:
+            self.assertRegex(str(error), "shear_sim_fmt")
+        except Exception as error:
+            self.fail(f"missing shear_sim_fmt needs a clear ValueError: {error}")
+        else:
+            self.fail("gen_mock_shear must require shear_sim_fmt")
+
+    def test_gen_mock_shear_requires_background_configuration(self):
+        self.write_shear_product(icosmo=0, irlz=0)
+        self.runner.shear_sim_fmt = str(
+            self.root
+            / "products"
+            / "cosmo_{:06d}"
+            / "realization_{:04d}.npz"
+        )
+
+        with self.assertRaisesRegex(ValueError, "background"):
+            self.runner.gen_mock_shear(icosmo=0, irlz=0, save=False)
+
+    def test_gen_mock_shear_rejects_sources_beyond_map_coverage(self):
+        self.write_shear_product(icosmo=0, irlz=0)
+        self.runner.shear_sim_fmt = str(
+            self.root
+            / "products"
+            / "cosmo_{:06d}"
+            / "realization_{:04d}.npz"
+        )
+        self.runner.back_survey_labels_dict = {"survey_a": 9}
+        self.runner.back_ngals_dict = {"tomo1": 1.25}
+        self.runner.tomo_labels_dict = {"tomo1": 1}
+        self.runner.shear_assigner = FakeShearAssigner(
+            redshifts=(0.4, 0.8, 1.5)
+        )
+
+        with self.assertRaisesRegex(ValueError, "redshift.*coverage"):
+            self.runner.gen_mock_shear(icosmo=0, irlz=0, save=False)
+
+    def test_gen_mock_shear_requires_output_format_when_saving(self):
+        self.write_shear_product(icosmo=0, irlz=0)
+        self.runner.shear_sim_fmt = str(
+            self.root
+            / "products"
+            / "cosmo_{:06d}"
+            / "realization_{:04d}.npz"
+        )
+        self.runner.back_survey_labels_dict = {"survey_a": 9}
+        self.runner.back_ngals_dict = {"tomo_low": 1.25}
+        self.runner.tomo_labels_dict = {"tomo_low": 1}
+        self.runner.shear_assigner = FakeShearAssigner()
+
+        try:
+            self.runner.gen_mock_shear(icosmo=0, irlz=0, save=True)
+        except ValueError as error:
+            self.assertRegex(str(error), "shear_ofmt")
+        except Exception as error:
+            self.fail(f"missing shear_ofmt needs a clear ValueError: {error}")
+        else:
+            self.fail("save=True must require shear_ofmt")
+
+    def test_constructor_shear_configuration_generates_real_shape_catalog(self):
+        self.write_shear_product(icosmo=0, irlz=0)
+        mask_path, nofz_path = self.write_background_inputs()
+        with warnings.catch_warnings(record=True) as caught_warnings:
+            warnings.simplefilter("always", ResourceWarning)
+            try:
+                runner = runner_module.FastPMRunner(
+                    config=PipeConfig(
+                        Lbox=1000.0,
+                        Npart=1024,
+                        redshift=0.3,
+                        sigma_e=0.0,
+                        sigma_phz=0.0,
+                    ),
+                    halo_fmt=self.halo_fmt,
+                    cosmo_par_fname=self.cosmo_file,
+                    fore_mask_fnames_dict={"boss_veto": []},
+                    fore_nofz_fnames_dict={},
+                    fore_survey_labels_dict={},
+                    shear_sim_fmt=str(
+                        self.root
+                        / "products"
+                        / "cosmo_{:06d}"
+                        / "realization_{:04d}.npz"
+                    ),
+                    back_mask_fnames_dict={
+                        "KiDS1000-North": str(mask_path)
+                    },
+                    back_nofz_fnames_dict={"tomo1": str(nofz_path)},
+                    back_survey_labels_dict={"KiDS1000-North": 4},
+                    back_ngals_dict={"tomo1": 1e-6},
+                    tomo_labels_dict={"tomo1": 1},
+                    shear_ofmt=str(self.root / "shape_{:d}_{:d}.fits"),
+                )
+            except TypeError as error:
+                self.fail(
+                    f"FastPMRunner must accept shear configuration: {error}"
+                )
+            gc.collect()
+        resource_warnings = [
+            warning for warning in caught_warnings
+            if issubclass(warning.category, ResourceWarning)
+        ]
+        self.assertEqual(resource_warnings, [])
+
+        result = runner.gen_mock_shear(icosmo=0, irlz=0, save=False)
+
+        self.assertGreater(len(result), 0)
+        np.testing.assert_array_equal(result["survey"], 4)
+        np.testing.assert_array_equal(result["tomo"], 1)
+        np.testing.assert_allclose(result["g1_pure"], 2.0)
+        np.testing.assert_allclose(result["g2_pure"], -2.0)
+        np.testing.assert_allclose(result["g1"], 2.0)
+        np.testing.assert_allclose(result["g2"], -2.0)
+        np.testing.assert_allclose(result["w"], 1.0)
+
+    def test_constructor_rejects_tomographic_key_label_mismatch(self):
+        mask_path, nofz_path = self.write_background_inputs()
+
+        with self.assertRaisesRegex(ValueError, "tomo_low.*tomo1"):
+            runner_module.FastPMRunner(
+                config=self.config,
+                halo_fmt=self.halo_fmt,
+                cosmo_par_fname=self.cosmo_file,
+                fore_mask_fnames_dict={"boss_veto": []},
+                fore_nofz_fnames_dict={},
+                fore_survey_labels_dict={},
+                shear_sim_fmt="unused_{:06d}_{:04d}.npz",
+                back_mask_fnames_dict={
+                    "KiDS1000-North": str(mask_path)
+                },
+                back_nofz_fnames_dict={"tomo_low": str(nofz_path)},
+                back_survey_labels_dict={"KiDS1000-North": 4},
+                back_ngals_dict={"tomo_low": 1e-6},
+                tomo_labels_dict={"tomo_low": 1},
+            )
+
+    def test_fastpm_background_masks_reject_unsupported_full_sky(self):
+        with patch.object(runner_module.hp, "nside2npix", return_value=12):
+            with self.assertRaisesRegex(ValueError, "FullSky"):
+                self.runner._prepare_back_masks({"FullSky": None})

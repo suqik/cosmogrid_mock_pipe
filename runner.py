@@ -1,5 +1,7 @@
+import json
 import os
 import numpy as np
+from astropy.io import fits
 from astropy.table import Table
 
 from handler import *
@@ -414,13 +416,22 @@ class FastPMRunner:
             fore_nofz_fnames_dict: dict,
             fore_survey_labels_dict: dict,
             gal_ofmt: str = None,
-            void_ofmt: str = None):
+            void_ofmt: str = None,
+            shear_sim_fmt: str = None,
+            back_mask_fnames_dict: dict = None,
+            back_nofz_fnames_dict: dict = None,
+            back_survey_labels_dict: dict = None,
+            back_ngals_dict: dict = None,
+            tomo_labels_dict: dict = None,
+            shear_ofmt: str = None):
         self.config = config
         self.halo_fmt = halo_fmt
         self.cosmo_par_fname = str(cosmo_par_fname)
         self.fore_survey_labels_dict = fore_survey_labels_dict
         self.gal_ofmt = gal_ofmt
         self.void_ofmt = void_ofmt
+        self.shear_sim_fmt = shear_sim_fmt
+        self.shear_ofmt = shear_ofmt
         self.scale_factor = 1.0 / (1.0 + config.redshift)
 
         if set(fore_survey_labels_dict) != set(fore_nofz_fnames_dict):
@@ -434,6 +445,51 @@ class FastPMRunner:
             config=config, masks=fore_masks, nofzs=fore_nofzs
         )
         self.void_finder = VoidFinder(config=config)
+
+        background_config = (
+            back_mask_fnames_dict,
+            back_nofz_fnames_dict,
+            back_survey_labels_dict,
+            back_ngals_dict,
+            tomo_labels_dict,
+        )
+        if any(value is not None for value in background_config):
+            if not all(value is not None for value in background_config):
+                raise ValueError(
+                    "FastPM shear setup requires all background dictionaries"
+                )
+            if set(back_survey_labels_dict) != set(back_mask_fnames_dict):
+                raise ValueError(
+                    "background survey labels and mask keys must match"
+                )
+            if set(back_ngals_dict) != set(back_nofz_fnames_dict):
+                raise ValueError(
+                    "background number-density and n(z) keys must match"
+                )
+            if set(tomo_labels_dict) != set(back_nofz_fnames_dict):
+                raise ValueError(
+                    "tomographic labels and n(z) keys must match"
+                )
+            for tomo_name, tomo_label in tomo_labels_dict.items():
+                expected_name = f"tomo{tomo_label}"
+                if tomo_name != expected_name:
+                    raise ValueError(
+                        f"tomographic key {tomo_name} must be {expected_name}"
+                    )
+
+            self.back_survey_labels_dict = back_survey_labels_dict
+            self.back_ngals_dict = back_ngals_dict
+            self.tomo_labels_dict = tomo_labels_dict
+            back_masks = self._prepare_back_masks(back_mask_fnames_dict)
+            back_nofzs = self._prepare_back_nofzs(back_nofz_fnames_dict)
+            self.shear_assigner = ShearAssigner(
+                config=config, masks=back_masks, nofzs=back_nofzs
+            )
+        else:
+            self.back_survey_labels_dict = {}
+            self.back_ngals_dict = {}
+            self.tomo_labels_dict = {}
+            self.shear_assigner = None
 
     def _prepare_fore_masks(self, mask_fnames):
         if "boss_veto" not in mask_fnames:
@@ -500,6 +556,29 @@ class FastPMRunner:
         if "boss_cmass" in nofz_info:
             nofz_info["boss_cmass"]["nz_ref"] *= 0.93
         return nofz_info
+
+    def _prepare_back_masks(self, mask_fnames):
+        masks = {}
+        for survey_name, mask_fname in mask_fnames.items():
+            if survey_name in {"KiDS1000-North", "KiDS1000-South"}:
+                with fits.open(mask_fname) as hdus:
+                    mask = np.array(hdus[1].data["VALUE"]).flatten()
+                mask = np.where(mask > 0, 1, 0)
+            elif survey_name == "boss_cmass_ngc":
+                mask = pymangle.Mangle(mask_fname)
+            else:
+                raise ValueError(
+                    f"Unsupported background survey mask: {survey_name}"
+                )
+            masks[survey_name] = mask
+        return masks
+
+    def _prepare_back_nofzs(self, nofz_fnames):
+        nofzs = {}
+        for tomo_name, nofz_fname in nofz_fnames.items():
+            nofz = np.loadtxt(nofz_fname)
+            nofzs[tomo_name] = make_nofz(nofz[:, 0], nofz[:, 1])
+        return nofzs
 
     def _get_cosmo_instance(self, icosmo: int, otype="ccl"):
         with open(self.cosmo_par_fname, "r") as stream:
@@ -572,6 +651,137 @@ class FastPMRunner:
         if "PID" not in columns:
             raise ValueError(f"Rockstar catalog has no PID column: {halo_fname}")
         return halo_fname
+
+    def _load_shear_maps(self, icosmo, irlz=0):
+        if self.shear_sim_fmt is None:
+            raise ValueError("shear_sim_fmt is required to load shear maps")
+        shear_fname = self.shear_sim_fmt.format(icosmo, irlz)
+        with np.load(shear_fname, allow_pickle=False) as product:
+            metadata = json.loads(str(product["metadata_json"]))
+            if metadata.get("cosmology_index") != icosmo:
+                raise ValueError(
+                    "shear product cosmology_index does not match request"
+                )
+            if metadata.get("realization_index") != irlz:
+                raise ValueError(
+                    "shear product realization_index does not match request"
+                )
+            product_cosmology = metadata.get("cosmology")
+            if not isinstance(product_cosmology, dict):
+                raise ValueError(
+                    "shear product must define cosmology metadata"
+                )
+            expected_cosmology = self._get_cosmo_instance(
+                icosmo, otype="dict"
+            )
+            for parameter in ("OmegaM", "S8", "hubble", "Omegab", "ns"):
+                try:
+                    product_value = float(product_cosmology[parameter])
+                except (KeyError, TypeError, ValueError) as error:
+                    raise ValueError(
+                        f"invalid shear product cosmology parameter {parameter}"
+                    ) from error
+                if not np.isclose(
+                    product_value,
+                    expected_cosmology[parameter],
+                    rtol=1e-8,
+                    atol=1e-10,
+                ):
+                    raise ValueError(
+                        "shear product cosmology parameter "
+                        f"{parameter} does not match catalog cosmology"
+                    )
+            map_metadata = metadata.get("map", {})
+            if (
+                map_metadata.get("ordering") != "RING"
+                or map_metadata.get("coordinate_system") != "C"
+            ):
+                raise ValueError(
+                    "FastPM shear maps must use RING ordering and "
+                    "celestial (C) coordinates"
+                )
+            source_metadata = metadata.get("sources")
+            if not isinstance(source_metadata, dict) or not source_metadata:
+                raise ValueError("shear product must define source metadata")
+
+            product_names = set(product.files)
+            gamma1_sources = {
+                name.removesuffix("__gamma1")
+                for name in product_names
+                if name.endswith("__gamma1")
+            }
+            gamma2_sources = {
+                name.removesuffix("__gamma2")
+                for name in product_names
+                if name.endswith("__gamma2")
+            }
+            if gamma1_sources != gamma2_sources:
+                raise ValueError(
+                    "shear product gamma1 and gamma2 sources must match"
+                )
+            if gamma1_sources != set(source_metadata):
+                raise ValueError(
+                    "shear product arrays and source metadata must match"
+                )
+
+            sources = []
+            for source_name, current_metadata in source_metadata.items():
+                try:
+                    redshift = float(current_metadata["effective_redshift"])
+                except (KeyError, TypeError, ValueError) as error:
+                    raise ValueError(
+                        f"source {source_name} needs a numeric "
+                        "effective_redshift"
+                    ) from error
+                gamma1 = np.asarray(product[f"{source_name}__gamma1"])
+                gamma2 = np.asarray(product[f"{source_name}__gamma2"])
+                if (
+                    gamma1.ndim != 1
+                    or gamma1.shape != gamma2.shape
+                    or not hp.isnpixok(gamma1.size)
+                ):
+                    raise ValueError(
+                        f"invalid HEALPix gamma arrays for source {source_name}"
+                    )
+                if (
+                    not np.isfinite(redshift)
+                    or not np.all(np.isfinite(gamma1))
+                    or not np.all(np.isfinite(gamma2))
+                ):
+                    raise ValueError(
+                        f"non-finite shear data for source {source_name}"
+                    )
+                declared_nside = map_metadata.get("nside")
+                if (
+                    declared_nside is not None
+                    and hp.npix2nside(gamma1.size) != declared_nside
+                ):
+                    raise ValueError(
+                        f"HEALPix nside mismatch for source {source_name}"
+                    )
+                sources.append(
+                    (
+                        redshift,
+                        np.array(gamma1),
+                        np.array(gamma2),
+                    )
+                )
+
+        sources.sort(key=lambda source: source[0])
+        source_redshifts = np.asarray([source[0] for source in sources])
+        if len(source_redshifts) < 2 or np.any(np.diff(source_redshifts) <= 0):
+            raise ValueError(
+                "shear product needs at least two strictly increasing "
+                "source redshifts"
+            )
+        return {
+            f"shell{index}": {
+                "redshift": redshift,
+                "gamma1": gamma1,
+                "gamma2": gamma2,
+            }
+            for index, (redshift, gamma1, gamma2) in enumerate(sources)
+        }
 
     def _get_sampling_seed_offset(self, icosmo, irlz):
         return icosmo * self.config.nrlzs_per_cosmo + irlz
@@ -699,4 +909,59 @@ class FastPMRunner:
 
         if save:
             Table(result).write(self.void_ofmt.format(icosmo, irlz, ihod))
+        return result
+
+    def gen_mock_shear(self, icosmo, irlz=0, save=False):
+        if self.shear_sim_fmt is None:
+            raise ValueError("shear_sim_fmt is required to load shear maps")
+        if save and self.shear_ofmt is None:
+            raise ValueError("shear_ofmt is required when save=True")
+        if (
+            self.shear_assigner is None
+            or not self.back_survey_labels_dict
+            or not self.tomo_labels_dict
+        ):
+            raise ValueError(
+                "background shear catalog configuration is required"
+            )
+        shear_maps = self._load_shear_maps(icosmo, irlz)
+        survey_catalogs = []
+        for survey_name, survey_label in self.back_survey_labels_dict.items():
+            for tomo_name, tomo_label in self.tomo_labels_dict.items():
+                catalog = self.shear_assigner.gen_gal_positions(
+                    ngal=self.back_ngals_dict[tomo_name],
+                    survey_name=survey_name,
+                    tomo_label=tomo_label,
+                    survey_label=survey_label,
+                )
+                source_redshifts = np.asarray(catalog["z_true"])
+                shell_redshifts = np.asarray([
+                    shear_maps[f"shell{index}"]["redshift"]
+                    for index in range(len(shear_maps))
+                ])
+                max_redshift = (
+                    shell_redshifts[-1]
+                    + shell_redshifts[-1]
+                    - shell_redshifts[-2]
+                )
+                if (
+                    not np.all(np.isfinite(source_redshifts))
+                    or np.any(source_redshifts < 0)
+                    or np.any(source_redshifts >= max_redshift)
+                ):
+                    raise ValueError(
+                        "source redshift is outside shear-map coverage "
+                        f"[0, {max_redshift})"
+                    )
+                catalog = self.shear_assigner.assign_shear(
+                    catalog, shear_maps
+                )
+                catalog = self.shear_assigner.assign_weights(
+                    catalog, weight_type="unity"
+                )
+                survey_catalogs.append(catalog)
+
+        result = np.concatenate(survey_catalogs)
+        if save:
+            Table(result).write(self.shear_ofmt.format(icosmo, irlz))
         return result
