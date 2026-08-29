@@ -60,6 +60,37 @@ class CosmoGridRunner:
         self.void_finder = VoidFinder(config=config)
         self.shear_assigner = ShearAssigner(config=config, 
                                             masks=back_masks, nofzs=back_nofzs)
+
+    @classmethod
+    def for_foreground(
+            cls, config: PipeConfig,
+            sim_fmt: str,
+            halo_fmt: str,
+            lb_z_file: str,
+            fore_mask_fnames_dict: dict,
+            fore_nofz_fnames_dict: dict,
+            fore_survey_labels_dict: dict,
+            gal_ofmt: str = None,
+            void_ofmt: str = None):
+        """Construct a runner for HOD, galaxy, and void workflows only."""
+        return cls(
+            config=config,
+            sim_fmt=sim_fmt,
+            halo_fmt=halo_fmt,
+            shear_sim_fmt=None,
+            lb_z_file=lb_z_file,
+            fore_mask_fnames_dict=fore_mask_fnames_dict,
+            fore_nofz_fnames_dict=fore_nofz_fnames_dict,
+            fore_survey_labels_dict=fore_survey_labels_dict,
+            back_mask_fnames_dict={},
+            back_nofz_fnames_dict={},
+            back_survey_labels_dict={},
+            back_ngals_dict={},
+            tomo_labels_dict={},
+            redshift_src_list=[],
+            gal_ofmt=gal_ofmt,
+            void_ofmt=void_ofmt,
+        )
         
     def _get_cosmo_instance(self, fname:str, otype="ccl") -> Union[dict, ccl.Cosmology]:
         ''' get ccl cosmology instance '''
@@ -118,6 +149,9 @@ class CosmoGridRunner:
 
         offset = icosmo * NRLZS_PER_COSMO * NHOD_PER_COSMO + irlz * NHOD_PER_COSMO + ihod
         return offset
+
+    def _get_sampling_seed_offset(self, icosmo, irlz):
+        return icosmo * self.config.nrlzs_per_cosmo + irlz
     
     def _prepare_fore_masks(self, fore_mask_fnames_dict:dict):
         masks = {}
@@ -290,7 +324,11 @@ class CosmoGridRunner:
         cosmo = self._get_cosmo_instance(cpar_fname, otype='ccl')
         hod_halocat = self.cata_loader.load_pkd_halocat(halo_fname, cosmo, 
                                                         ofmt='hod', clean=False)
-        hod_params_alive = self.hod_populator.find_hod_params(hod_halocat, seed_offset=icosmo)
+        seed_offset = self._get_sampling_seed_offset(icosmo, irlz)
+        hod_params_alive = self.hod_populator.find_hod_params(
+            hod_halocat,
+            seed_offset=seed_offset,
+        )
         
         return hod_params_alive
     
@@ -309,10 +347,28 @@ class CosmoGridRunner:
         indx = self._get_hod_seed_offset(icosmo, irlz, ihod)
         dict_of_gsamples = self.hod_populator.populate_galaxies(hod_halocat, ihod_param_dict, indx=indx, OmegaM=OmegaM)
         gsample_arr = self._gsample_dict_to_array(dict_of_gsamples)
-        gal_pos, gal_vel = self.hod_populator.get_galaxy_features(gsample_arr, features=["pos", "vel"])
+        gal_pos, gal_vel, gal_type, host_halo_mvir = (
+            self.hod_populator.get_galaxy_features(
+                gsample_arr,
+                features=[
+                    "pos",
+                    "vel",
+                    "gal_type",
+                    "host_halo_mvir",
+                ],
+            )
+        )
 
         # >>> =========   3. Box to lightcone and apply survey geometry & n(z)   =========== <<<
-        galcone_fullsky = self.survey_generator.box_to_lightcone(cosmo, gal_pos=gal_pos, gal_adj_props={'gal_vel': gal_vel})
+        galcone_fullsky = self.survey_generator.box_to_lightcone(
+            cosmo,
+            gal_pos=gal_pos,
+            gal_adj_props={
+                'gal_vel': gal_vel,
+                'gal_type': gal_type,
+                'host_halo_mvir': host_halo_mvir,
+            },
+        )
         galcone_survey = []
         for isurvey_name, isurvey_label in self.fore_survey_labels_dict.items():
 
@@ -853,11 +909,25 @@ class FastPMRunner:
             OmegaM=OmegaM,
         )
         galaxies = self._gsample_dict_to_array(samples)
-        gal_pos, gal_vel = self.hod_populator.get_galaxy_features(
-            galaxies, features=["pos", "vel"]
+        gal_pos, gal_vel, gal_type, host_halo_mvir = (
+            self.hod_populator.get_galaxy_features(
+                galaxies,
+                features=[
+                    "pos",
+                    "vel",
+                    "gal_type",
+                    "host_halo_mvir",
+                ],
+            )
         )
         fullsky = self.survey_generator.box_to_lightcone(
-            cosmo, gal_pos=gal_pos, gal_adj_props={"gal_vel": gal_vel}
+            cosmo,
+            gal_pos=gal_pos,
+            gal_adj_props={
+                "gal_vel": gal_vel,
+                "gal_type": gal_type,
+                "host_halo_mvir": host_halo_mvir,
+            },
         )
 
         survey_catalogs = []

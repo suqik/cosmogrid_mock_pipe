@@ -31,9 +31,16 @@ def get_hod_params_container(params_list):
     params_container = {}
     if params_list is not None:
         for i in range(len(params_list)):
-            params_container[f'HOD{i}'] = params_list[i]
-    
+            params_container[f'HOD{i}'] = params_list[i].tolist()
+
     return params_container
+
+def merge_hod_sample_parts(cosmo_hod_pairs_parts):
+    cosmo_hod_pairs = {}
+    for cosmo_hod_pairs_part in cosmo_hod_pairs_parts:
+        cosmo_hod_pairs.update(cosmo_hod_pairs_part)
+
+    return cosmo_hod_pairs
 
 def save_hod_samples(fname:str, cosmo_hod_pairs:dict):
     '''
@@ -45,7 +52,6 @@ def save_hod_samples(fname:str, cosmo_hod_pairs:dict):
 
     with open(fname, "w+") as f:
         json.dump(cosmo_hod_pairs, f)
-
 
 if __name__ == "__main__":
 
@@ -147,13 +153,14 @@ if __name__ == "__main__":
 
     cosmo_labels_local = comm.scatter(chunks, root=0)
 
-    cosmogrid_runner = CosmoGridRunner(config=cosmogridV1_config, 
+    cosmogrid_runner = CosmoGridRunner.for_foreground(
+                                    config=cosmogridV1_config,
                                     sim_fmt=sim_fmt,
                                     halo_fmt=halo_fmt,
                                     lb_z_file=lb_z_file,
-                                    mask_fnames_dict=mask_fnames_dict,
-                                    nofz_fnames_dict=nofz_fnames_dict,
-                                    survey_labels_dict=survey_labels_dict)
+                                    fore_mask_fnames_dict=mask_fnames_dict,
+                                    fore_nofz_fnames_dict=nofz_fnames_dict,
+                                    fore_survey_labels_dict=survey_labels_dict)
     
     cosmo_hod_pairs_local = {}
 
@@ -161,8 +168,6 @@ if __name__ == "__main__":
     for icosmo in cosmo_labels_local:
 
         logger.info(f"Rank {rank}: start processing cosmo_{icosmo:06d}")
-
-        cosmo_hod_pairs_local[f'cosmo_{icosmo:06d}'] = {}
 
         hod_params_alive = cosmogrid_runner.sample_hod_params(icosmo, 0)
 
@@ -173,4 +178,5 @@ if __name__ == "__main__":
     cosmo_hod_pairs_global = comm.gather(cosmo_hod_pairs_local, root=0)
 
     if rank == 0:
-        save_hod_samples(cosmo_hod_pairs_global, hod_samples_output)
+        merged_hod_samples = merge_hod_sample_parts(cosmo_hod_pairs_global)
+        save_hod_samples(hod_samples_output, merged_hod_samples)

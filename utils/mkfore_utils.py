@@ -3,6 +3,8 @@ Utils usd in constructing foreground samples
 '''
 
 import numpy as np
+import subprocess
+from pathlib import Path
 from scipy.stats import gaussian_kde
 from scipy.spatial.transform import Rotation as R
 import healpy as hp
@@ -611,6 +613,13 @@ def apply_2dflens_geometry(galcone, mask_weight_maps, interp=True):
     return galcone_2dflens
 
 def apply_nz(galcone, nofz_info, nofz_method, norm=False, add_rsd=False):
+    valid_methods = {"const", "downsample", "rank"}
+    if nofz_method not in valid_methods:
+        raise ValueError(
+            f"nofz_method must be one of {sorted(valid_methods)}, "
+            f"received {nofz_method!r}"
+        )
+
     zedges = nofz_info['zedges']
     shell_vol = nofz_info['shell_vol']
     nz_ref = nofz_info['nz_ref']
@@ -619,15 +628,25 @@ def apply_nz(galcone, nofz_info, nofz_method, norm=False, add_rsd=False):
         z_mock = galcone["zrsd"]
     else:
         z_mock = galcone["z"]
-        
+
+    if nofz_method == "const":
+        in_range = (z_mock >= zedges[0]) & (z_mock < zedges[-1])
+        return galcone[in_range].copy()
+
     Nz_mock, _ = np.histogram(z_mock, zedges)
     Nz_target = nz_ref * shell_vol
-    downsample_rate = Nz_target / Nz_mock
-    downsample_rate = np.nan_to_num(downsample_rate, nan=0.0, posinf=0.0, neginf=0.0)
+    downsample_rate = np.divide(
+        Nz_target,
+        Nz_mock,
+        out=np.zeros_like(Nz_target, dtype=float),
+        where=Nz_mock != 0,
+    )
     downsample_rate = np.clip(downsample_rate, 0, 1)
 
     if norm:
-        downsample_rate /= np.max(downsample_rate)
+        maximum_rate = np.max(downsample_rate, initial=0.0)
+        if maximum_rate > 0:
+            downsample_rate /= maximum_rate
 
     downsample_rate = np.clip(downsample_rate, 0, 1)
     
@@ -640,19 +659,29 @@ def apply_nz(galcone, nofz_info, nofz_method, norm=False, add_rsd=False):
 
         if len(gal_in_bin) != 0:
             if nofz_method == "downsample":
-                mask = np.random.choice(np.arange(len(gal_in_bin)), size=int(downsample_rate[ibin]*len(gal_in_bin)), replace=False)
-            if nofz_method == "rank":
+                target_count = int(
+                    downsample_rate[ibin] * len(gal_in_bin)
+                )
+                mask = np.random.choice(
+                    np.arange(len(gal_in_bin)),
+                    size=target_count,
+                    replace=False,
+                )
+            else:
                 ### descending rank of gal in bin
                 ranked_idx = np.argsort(gal_in_bin, order="host_halo_mvir")[::-1]
-                mask = ranked_idx[:Nz_target[ibin]]
+                target_count = min(
+                    max(int(Nz_target[ibin]), 0),
+                    len(gal_in_bin),
+                )
+                mask = ranked_idx[:target_count]
 
             galcone_dsampled.append(gal_in_bin[mask])
-            if nofz_method == "const":
-                pass
 
-    galcone_dsampled = np.concatenate(galcone_dsampled)
+    if not galcone_dsampled:
+        return galcone[:0].copy()
 
-    return galcone_dsampled
+    return np.concatenate(galcone_dsampled)
 
 def make_nofz_info(nofz_info, survey_name, zedges, shell_vol, nz_ref):
     nofz_info[survey_name] = {}
@@ -768,22 +797,34 @@ def find_void(tracer_pos, boxsize=None,
               exec_path="/home/suchen/applications/DIVE/DIVE", 
               dive_input="./tmp_tracer.dat",
               dive_output="./tmp_void.dat"):
+    input_path = Path(dive_input)
+    output_path = Path(dive_output)
+    input_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    np.savetxt(dive_input, tracer_pos, fmt='%.3f')
-
-    cmd = exec_path + " -i " + dive_input + " -o " + dive_output
+    command = [
+        str(exec_path),
+        "-i",
+        str(input_path),
+        "-o",
+        str(output_path),
+    ]
     if boxsize is not None:
-        cmd += " -u " + str(boxsize)
-    print(cmd)
-    os.system(cmd)
-    print(f"rm {dive_input}")
-    os.system(f"rm {dive_input}")
+        command.extend(["-u", str(boxsize)])
 
-    void_info = np.loadtxt(dive_output)
-    void_pos = void_info[:,:-1]
-    void_radius = void_info[:,-1]
-
-    print(f"rm {dive_output}")
-    os.system(f"rm {dive_output}")
+    try:
+        np.savetxt(input_path, tracer_pos, fmt='%.3f')
+        print(" ".join(command))
+        subprocess.run(command, check=True)
+        void_info = np.loadtxt(output_path, ndmin=2)
+        if void_info.shape[1] != 4:
+            raise ValueError(
+                "DIVE output must contain x, y, z, and radius columns"
+            )
+        void_pos = void_info[:, :-1]
+        void_radius = void_info[:, -1]
+    finally:
+        input_path.unlink(missing_ok=True)
+        output_path.unlink(missing_ok=True)
 
     return void_pos, void_radius

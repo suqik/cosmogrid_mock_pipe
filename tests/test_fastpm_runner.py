@@ -43,22 +43,44 @@ class GalaxyHODPopulator:
             dtype=[
                 ("x", "f8"), ("y", "f8"), ("z", "f8"),
                 ("vx", "f8"), ("vy", "f8"), ("vz", "f8"),
+                ("gal_type", "i4"), ("halo_mvir", "f8"),
             ],
         )
         galaxies["x"] = indx
         galaxies["vx"] = OmegaM
+        galaxies["gal_type"] = 1
+        galaxies["halo_mvir"] = 2.5e13
         return {"dummy": galaxies}
 
     def get_galaxy_features(self, galaxies, features):
         pos = np.column_stack([galaxies["x"], galaxies["y"], galaxies["z"]])
         vel = np.column_stack([galaxies["vx"], galaxies["vy"], galaxies["vz"]])
-        return pos, vel
+        outputs = [pos]
+        if "vel" in features:
+            outputs.append(vel)
+        if "gal_type" in features:
+            outputs.append(galaxies["gal_type"])
+        if "host_halo_mvir" in features:
+            outputs.append(galaxies["halo_mvir"])
+        return tuple(outputs)
 
 
 class GalaxySurveyGenerator:
     def box_to_lightcone(self, cosmo, gal_pos, gal_adj_props):
-        result = np.zeros(1, dtype=[("marker", "f8"), ("survey", "i4")])
+        result = np.zeros(
+            1,
+            dtype=[
+                ("marker", "f8"),
+                ("survey", "i4"),
+                ("gal_type", "i4"),
+                ("host_halo_mvir", "f8"),
+            ],
+        )
         result["marker"] = gal_pos[0, 0] + gal_adj_props["gal_vel"][0, 0]
+        result["gal_type"] = gal_adj_props.get("gal_type", [-1])
+        result["host_halo_mvir"] = gal_adj_props.get(
+            "host_halo_mvir", [-1.0]
+        )
         return result
 
     def gen_boss_like(self, galcone, survey_name, survey_label, make_nz=True):
@@ -439,6 +461,8 @@ class FastPMRunnerCoreTests(unittest.TestCase):
         self.assertEqual(len(result), 1)
         np.testing.assert_array_equal(result["survey"], [7])
         self.assertAlmostEqual(result["marker"][0], 23.200614)
+        np.testing.assert_array_equal(result["gal_type"], [1])
+        np.testing.assert_allclose(result["host_halo_mvir"], [2.5e13])
 
     def test_gen_mock_gal_requires_output_format_when_saving(self):
         self.assertTrue(
@@ -466,9 +490,14 @@ class FastPMRunnerCoreTests(unittest.TestCase):
 
         self.assertTrue(output.is_file())
         saved = Table.read(output)
-        self.assertEqual(saved.colnames, ["marker", "survey"])
+        self.assertEqual(
+            saved.colnames,
+            ["marker", "survey", "gal_type", "host_halo_mvir"],
+        )
         np.testing.assert_allclose(saved["marker"], [23.200614])
         np.testing.assert_array_equal(saved["survey"], [7])
+        np.testing.assert_array_equal(saved["gal_type"], [1])
+        np.testing.assert_allclose(saved["host_halo_mvir"], [2.5e13])
         np.testing.assert_array_equal(saved.as_array(), result)
 
     def test_gen_mock_void_filters_redshift_and_preserves_survey(self):

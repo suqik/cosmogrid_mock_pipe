@@ -18,16 +18,11 @@ def get_cosmo_labels_processed(fname:str):
     Read cosmo labels from hod param json file.
     '''
 
-    if not os.path.exists(fname):
-        raise FileNotFoundError(f"File {fname} not found!")
+    cosmo_hod_info = load_hod_samples(fname)
 
-    with open(fname, "r") as f:
-        cosmo_hod_info = json.load(f)
-    
     cosmo_labels = []
     for icosmo_str in cosmo_hod_info.keys():
-        if len(cosmo_hod_info[icosmo_str]) == 11:
-            cosmo_labels.append(int(icosmo_str[5:]))
+        cosmo_labels.append(int(icosmo_str[6:]))
 
     return cosmo_labels
 
@@ -146,14 +141,15 @@ if __name__ == "__main__":
 
     cosmo_hod_pairs = load_hod_samples(cosmo_hod_file)
 
-    cosmogrid_runner = CosmoGridRunner(config=cosmogridV1_config, 
+    cosmogrid_runner = CosmoGridRunner.for_foreground(
+                                    config=cosmogridV1_config,
                                     sim_fmt=sim_fmt,
                                     halo_fmt=halo_fmt,
                                     lb_z_file=lb_z_file,
-                                    mask_fnames_dict=mask_fnames_dict,
-                                    nofz_fnames_dict=nofz_fnames_dict,
-                                    survey_labels_dict=survey_labels_dict,
-                                    gal_fmt=galcone_fmt)
+                                    fore_mask_fnames_dict=mask_fnames_dict,
+                                    fore_nofz_fnames_dict=nofz_fnames_dict,
+                                    fore_survey_labels_dict=survey_labels_dict,
+                                    gal_ofmt=galcone_fmt)
     
     NHOD_PER_COSMO = cosmogrid_runner.config.nhod_per_cosmo
     NRLZS_PER_COSMO = cosmogrid_runner.config.nrlzs_per_cosmo
@@ -163,7 +159,7 @@ if __name__ == "__main__":
 
         logger.info(f"Rank {rank}: start processing cosmo_{icosmo:06d}")
 
-        curr_hod_params_dict = cosmo_hod_pairs[f'cosmo{icosmo:06d}']
+        curr_hod_params_dict = cosmo_hod_pairs[f'cosmo_{icosmo:06d}']
 
         for irlz in range(NRLZS_PER_COSMO):
 

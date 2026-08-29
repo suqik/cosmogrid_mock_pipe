@@ -18,18 +18,26 @@ def get_cosmo_labels_processed(fname:str):
     Read cosmo labels from hod param json file.
     '''
 
-    if not os.path.exists(fname):
-        raise FileNotFoundError(f"File {fname} not found!")
-
-    with open(fname, "r") as f:
-        cosmo_hod_info = json.load(f)
+    cosmo_hod_info = load_hod_samples(fname)
     
     cosmo_labels = []
     for icosmo_str in cosmo_hod_info.keys():
-        if len(cosmo_hod_info[icosmo_str]) == 11:
-            cosmo_labels.append(int(icosmo_str[5:]))
+        cosmo_labels.append(int(icosmo_str[6:]))
 
     return cosmo_labels
+
+def load_hod_samples(fname:str):
+    '''
+    Load (cosmo_label, hod_params) pairs.
+    '''
+
+    if not os.path.isdir(os.path.dirname(fname)):
+        raise FileNotFoundError(f"Dictionary {os.path.dirname(fname)} not found !")
+
+    with open(fname, "r") as f:
+        cosmo_hod_pairs = json.load(f)
+
+    return cosmo_hod_pairs
 
 if __name__ == "__main__":
     cosmogridV1_config = PipeConfig(

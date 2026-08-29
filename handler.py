@@ -178,22 +178,28 @@ class HODPopulator:
         halo_mass = hod_halocat.halo_table["halo_mvir"].value
         Lbox = self.config.Lbox
         redshift = self.config.redshift
+        target_count = int(self.config.nhod_per_cosmo)
+        if target_count <= 0:
+            raise ValueError("nhod_per_cosmo must be positive")
+        if num_pool < target_count:
+            raise ValueError(
+                "num_pool must be at least nhod_per_cosmo "
+                f"({target_count})"
+            )
+
         ## Sample HOD parameters
-        idx = 0
         seed = seedini + seed_offset
 
-        hod_params_pool = self._open_params_pool(num_pool, seed)
+        hod_params_pool = np.asarray(self._open_params_pool(num_pool, seed))
+        if len(hod_params_pool) < target_count:
+            raise ValueError(
+                "sampled HOD pool contains fewer rows than nhod_per_cosmo"
+            )
+        hod_params_alive = []
         
         ## Main loop to find HOD parameters that matches reference galaxy number density
 
-        while(idx < num_pool):
-            curr_hod_params = hod_params_pool[idx,:]
-            # try:
-            #     curr_hod_params = hod_params_pool[idx,:]
-            # except:
-            #     warnings.warn("Found {} HOD parameters that matches reference galaxy number density.".format(count))
-            #     break
-
+        for curr_hod_params in hod_params_pool:
             if self.config.model == 0:
                 ngal_mock, Nsat_frac = get_ngal(
                     halo_mass=halo_mass, Lbox=Lbox, redshift=redshift,
@@ -201,10 +207,8 @@ class HODPopulator:
                 )
                 
                 if np.abs(ngal_mock - self.config.ngal_ref) < 0.1 and Nsat_frac < 0.3: # avoid too many satellite galaxies in one halo
-                    idx += 1
-                    hod_params_alive = curr_hod_params
+                    hod_params_alive.append(curr_hod_params.tolist())
                 else:
-                    idx += 1
                     continue
 
             ## update fic
@@ -226,10 +230,23 @@ class HODPopulator:
                 #     idx += 1
                 #     continue
 
-                hod_params_alive = list(curr_hod_params)+[1.0]
-                idx += 1
+                hod_params_alive.append(list(curr_hod_params)+[1.0])
+            elif self.config.model != 0:
+                raise NotImplementedError(
+                    "HOD parameter sampling is not implemented for "
+                    f"model {self.config.model}"
+                )
 
-        return hod_params_alive
+            if len(hod_params_alive) == target_count:
+                break
+
+        if len(hod_params_alive) != target_count:
+            raise RuntimeError(
+                "HOD parameter pool exhausted after finding "
+                f"{len(hod_params_alive)} of {target_count} requested rows"
+            )
+
+        return np.asarray(hod_params_alive, dtype=float)
 
     def _open_params_pool(self, num_pool, seed=None):
         model = self.config.model
@@ -248,7 +265,7 @@ class HODPopulator:
             upper_bound = prior_high[4]
             hod_params_pool[:,4] = truncnorm(
                 (lower_bound - mu)/sigma, (upper_bound - mu)/sigma, loc=mu, scale=sigma
-                ).rvs(size=num_pool)
+                ).rvs(size=num_pool, random_state=seed)
             
         return hod_params_pool
     
@@ -282,7 +299,9 @@ class HODPopulator:
         if "gal_type" in features:
             gal_type = galaxy_arr["gal_type"]
             outputs += [gal_type]
-        if "gal_host_halo_mvir" in features:
+        if (
+                "host_halo_mvir" in features
+                or "gal_host_halo_mvir" in features):
             gal_host_halo_mvir = galaxy_arr["halo_mvir"]
             outputs += [gal_host_halo_mvir]
 
@@ -308,7 +327,9 @@ class SurveyGenerator:
 
         return chis
     
-    def box_to_lightcone(self, cosmo, gal_pos, gal_adj_props={}):
+    def box_to_lightcone(self, cosmo, gal_pos, gal_adj_props=None):
+        if gal_adj_props is None:
+            gal_adj_props = {}
         cosmo_ccl = cosmo
         Lbox = self.config.Lbox
         zmin = self.config.zmin_lightcone
@@ -334,6 +355,12 @@ class SurveyGenerator:
             raise ValueError("gal_pos should be 2D array")
         if gal_pos.shape[1] != 3:
             raise ValueError("gal_pos should have 3 columns")
+        for prop_name, prop_data in gal_adj_props.items():
+            if len(prop_data) != len(gal_pos):
+                raise ValueError(
+                    f"adjacent property {prop_name} has {len(prop_data)} "
+                    f"rows, expected {len(gal_pos)}"
+                )
 
         ### register gal adj props
         adj_props = []
@@ -386,7 +413,7 @@ class SurveyGenerator:
         
         del galcone
 
-        galcone_output = np.empty((len(galcone_ra),), dtype=fgal_type)
+        galcone_output = np.zeros((len(galcone_ra),), dtype=fgal_type)
         galcone_output["ra"] = galcone_ra
         galcone_output["dec"] = galcone_dec
         galcone_output["z"] = galcone_z
@@ -491,6 +518,7 @@ class VoidFinder:
         galpos_cart = Sph2Cart(cosmo_ccl, ra=galcone['ra'], dec=galcone['dec'], z=galcone['zrsd']) 
         
         void_pos_cart, void_radii = find_void(galpos_cart, 
+                                        exec_path=self.config.dive_exec_path,
                                         dive_input=dive_input, 
                                         dive_output=dive_output)
         
