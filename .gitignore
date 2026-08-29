@@ -1,6 +1,7 @@
 
 # pixi environments
 .pixi
+.worktrees/
 *.egg-info
 catalogs/
 .vscode/
