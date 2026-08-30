@@ -166,15 +166,82 @@ class ScriptHODIORegressionTests(unittest.TestCase):
 
 
 class DriverBuilderRegressionTests(unittest.TestCase):
+    def _assert_runner_builder_call(
+            self, tree, *, builder_name, expected_keywords):
+        runner_assignment = next(
+            (
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Assign)
+                and any(
+                    isinstance(target, ast.Name)
+                    and target.id == "cosmogrid_runner"
+                    for target in node.targets
+                )
+            ),
+            None,
+        )
+        self.assertIsNotNone(runner_assignment)
+        call = runner_assignment.value
+        self.assertIsInstance(call, ast.Call)
+        self.assertIsInstance(call.func, ast.Attribute)
+        self.assertIsInstance(call.func.value, ast.Name)
+        self.assertEqual(call.func.value.id, "CosmoGridRunner")
+        self.assertEqual(call.func.attr, builder_name)
+        self.assertEqual(
+            {keyword.arg for keyword in call.keywords},
+            expected_keywords,
+        )
+
+    def test_runner_assignment_rejects_unrelated_expected_builder_call(self):
+        tree = ast.parse(
+            "CosmoGridRunner.build_hod_runner(config=config)\n"
+            "cosmogrid_runner = CosmoGridRunner.build_gal_runner(\n"
+            "    config=config\n"
+            ")\n"
+        )
+
+        with self.assertRaisesRegex(AssertionError, "build_hod_runner"):
+            self._assert_runner_builder_call(
+                tree,
+                builder_name="build_hod_runner",
+                expected_keywords={"config"},
+            )
+
     def test_each_driver_uses_its_task_specific_builder(self):
         expected = {
-            "run_sampling_hod.py": "build_hod_runner",
-            "run_mock_gal.py": "build_gal_runner",
-            "run_mock_void.py": "build_void_runner",
-            "run_mock_shape.py": "build_shape_runner",
+            "run_sampling_hod.py": (
+                "build_hod_runner",
+                {"config", "sim_fmt", "halo_fmt", "lb_z_file"},
+            ),
+            "run_mock_gal.py": (
+                "build_gal_runner",
+                {
+                    "config", "sim_fmt", "halo_fmt", "lb_z_file",
+                    "fore_mask_fnames_dict", "fore_nofz_fnames_dict",
+                    "fore_survey_labels_dict", "gal_ofmt",
+                },
+            ),
+            "run_mock_void.py": (
+                "build_void_runner",
+                {
+                    "config", "sim_fmt", "lb_z_file",
+                    "fore_mask_fnames_dict", "fore_nofz_fnames_dict",
+                    "fore_survey_labels_dict", "void_ofmt",
+                },
+            ),
+            "run_mock_shape.py": (
+                "build_shape_runner",
+                {
+                    "config", "shear_sim_fmt", "back_mask_fnames_dict",
+                    "back_nofz_fnames_dict", "back_survey_labels_dict",
+                    "back_ngals_dict", "tomo_labels_dict",
+                    "redshift_src_list", "shear_ofmt",
+                },
+            ),
         }
         root = Path(__file__).resolve().parents[1]
-        for filename, builder_name in expected.items():
+        for filename, (builder_name, expected_keywords) in expected.items():
             with self.subTest(filename=filename):
                 tree = ast.parse((root / filename).read_text())
                 called_attributes = {
@@ -183,7 +250,11 @@ class DriverBuilderRegressionTests(unittest.TestCase):
                     if isinstance(node, ast.Call)
                     and isinstance(node.func, ast.Attribute)
                 }
-                self.assertIn(builder_name, called_attributes)
+                self._assert_runner_builder_call(
+                    tree,
+                    builder_name=builder_name,
+                    expected_keywords=expected_keywords,
+                )
                 self.assertNotIn("for_foreground", called_attributes)
 
 
