@@ -301,6 +301,104 @@ class CosmoGridRunnerBuilderTests(unittest.TestCase):
         self.assertIsNotNone(runner.void_finder)
         self.assertIsNotNone(runner.shear_assigner)
 
+    def test_incompatible_task_method_names_required_builder(self):
+        runner = CosmoGridRunner()
+        calls = [
+            ("build_hod_runner", lambda: runner.sample_hod_params(0, 0)),
+            ("build_gal_runner", lambda: runner.gen_mock_gal(0, 0, 0, [1.0])),
+            (
+                "build_void_runner",
+                lambda: runner.gen_mock_void(
+                    0, 0, 0, np.zeros(0), "input", "output"
+                ),
+            ),
+            ("build_shape_runner", lambda: runner.gen_mock_shear(0)),
+        ]
+        for builder_name, call in calls:
+            with self.subTest(builder=builder_name):
+                with self.assertRaisesRegex(ValueError, builder_name):
+                    call()
+
+    def test_component_initializers_reuse_existing_instances(self):
+        runner = CosmoGridRunner.build_gal_runner(
+            config=self.config,
+            sim_fmt="sim/{:d}/{:d}",
+            halo_fmt="halo.{:d}",
+            lb_z_file=self.label_file,
+            **self.foreground,
+        )
+        components = (
+            runner.cata_loader,
+            runner.hod_populator,
+            runner.survey_generator,
+        )
+        runner._initialize_hod_components()
+        runner._initialize_survey_generator()
+        self.assertEqual(
+            components,
+            (runner.cata_loader, runner.hod_populator, runner.survey_generator),
+        )
+
+    def test_void_cosmology_path_does_not_need_halo_format(self):
+        runner = CosmoGridRunner.build_void_runner(
+            config=self.config,
+            sim_fmt="sim/cosmo_{:d}/run_{:d}",
+            lb_z_file=self.label_file,
+            **self.foreground,
+        )
+        self.assertEqual(
+            runner._get_cosmo_fname(2, 3),
+            "sim/cosmo_2/run_3/params.yml",
+        )
+
+    def test_void_generation_uses_requested_realization_cosmology_path(self):
+        class StopAfterCosmologyLookup(Exception):
+            pass
+
+        runner = CosmoGridRunner.build_void_runner(
+            config=self.config,
+            sim_fmt="sim/cosmo_{:d}/run_{:d}",
+            lb_z_file=self.label_file,
+            **self.foreground,
+        )
+
+        def stop_after_cosmology_lookup(fname, otype):
+            self.assertEqual(fname, "sim/cosmo_2/run_3/params.yml")
+            self.assertEqual(otype, "ccl")
+            raise StopAfterCosmologyLookup
+
+        runner._get_cosmo_instance = stop_after_cosmology_lookup
+
+        with self.assertRaises(StopAfterCosmologyLookup):
+            runner.gen_mock_void(2, 3, 0, np.zeros(0), "input", "output")
+
+    def test_direct_constructor_infers_each_supplied_group(self):
+        hod = CosmoGridRunner(
+            config=self.config,
+            sim_fmt="sim/{:d}/{:d}",
+            halo_fmt="halo.{:d}",
+            lb_z_file=self.label_file,
+        )
+        foreground = CosmoGridRunner(
+            config=self.config,
+            sim_fmt="sim/{:d}/{:d}",
+            lb_z_file=self.label_file,
+            **self.foreground,
+        )
+        background = CosmoGridRunner(
+            config=self.config,
+            shear_sim_fmt="shear_{:d}_{:.2f}.hdf5",
+            redshift_src_list=[0.2, 0.4],
+            **self.background,
+        )
+        self.assertIsNotNone(hod.hod_populator)
+        self.assertIsNone(hod.survey_generator)
+        self.assertIsNotNone(foreground.survey_generator)
+        self.assertIsNotNone(foreground.void_finder)
+        self.assertIsNone(foreground.hod_populator)
+        self.assertIsNotNone(background.shear_assigner)
+        self.assertIsNone(background.survey_generator)
+
 
 class ApplyNzRegressionTests(unittest.TestCase):
     def setUp(self):

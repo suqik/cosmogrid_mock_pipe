@@ -563,7 +563,7 @@ class CosmoGridRunner:
         )
 
         # >>> =========   1. Load cosmology   =========== <<<
-        cpar_fname = self._get_cosmo_fname(icosmo, 0)
+        cpar_fname = self._get_cosmo_fname(icosmo, irlz)
         cosmo = self._get_cosmo_instance(cpar_fname, otype='ccl')
         
         # >>> =========   2. Find void and apply geometry   =========== <<<
