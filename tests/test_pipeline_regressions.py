@@ -1,9 +1,10 @@
 import json
+import inspect
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch, sentinel
 
 import numpy as np
 
@@ -163,35 +164,142 @@ class ScriptHODIORegressionTests(unittest.TestCase):
                 )
 
 
-class ForegroundRunnerRegressionTests(unittest.TestCase):
+class CosmoGridRunnerBuilderTests(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
         self.label_file = Path(self.tempdir.name) / "label_z.txt"
         self.label_file.write_text("0 0.3\n1 0.4\n")
+        self.config = PipeConfig(Lbox=1000.0, Npart=1024, redshift=0.3)
+        self.foreground = {
+            "fore_mask_fnames_dict": {"boss_veto": []},
+            "fore_nofz_fnames_dict": {},
+            "fore_survey_labels_dict": {},
+        }
+        self.background = {
+            "back_mask_fnames_dict": {},
+            "back_nofz_fnames_dict": {},
+            "back_survey_labels_dict": {},
+            "back_ngals_dict": {},
+            "tomo_labels_dict": {},
+        }
 
     def tearDown(self):
         self.tempdir.cleanup()
 
-    def test_foreground_runner_constructor_needs_no_background_configuration(self):
-        self.assertTrue(
-            hasattr(CosmoGridRunner, "for_foreground"),
-            "CosmoGridRunner.for_foreground must be implemented",
+    def test_constructor_and_builder_parameters_default_to_none(self):
+        callables = [
+            CosmoGridRunner.__init__,
+            CosmoGridRunner.build_hod_runner,
+            CosmoGridRunner.build_gal_runner,
+            CosmoGridRunner.build_void_runner,
+            CosmoGridRunner.build_shape_runner,
+        ]
+        for callable_object in callables:
+            with self.subTest(callable=callable_object.__name__):
+                parameters = inspect.signature(callable_object).parameters
+                for name, parameter in parameters.items():
+                    if name in {"self", "cls"}:
+                        continue
+                    self.assertIsNone(parameter.default, name)
+
+    def test_each_builder_initializes_exact_component_set(self):
+        replacements = {
+            "CatalogLoader": Mock(return_value=sentinel.catalog_loader),
+            "HODPopulator": Mock(return_value=sentinel.hod_populator),
+            "SurveyGenerator": Mock(return_value=sentinel.survey_generator),
+            "VoidFinder": Mock(return_value=sentinel.void_finder),
+            "ShearAssigner": Mock(return_value=sentinel.shear_assigner),
+        }
+        with patch.multiple("runner", **replacements):
+            hod = CosmoGridRunner.build_hod_runner(
+                config=self.config,
+                sim_fmt="sim/{:d}/{:d}",
+                halo_fmt="halo.{:d}",
+                lb_z_file=self.label_file,
+            )
+            gal = CosmoGridRunner.build_gal_runner(
+                config=self.config,
+                sim_fmt="sim/{:d}/{:d}",
+                halo_fmt="halo.{:d}",
+                lb_z_file=self.label_file,
+                **self.foreground,
+            )
+            void = CosmoGridRunner.build_void_runner(
+                config=self.config,
+                sim_fmt="sim/{:d}/{:d}",
+                lb_z_file=self.label_file,
+                **self.foreground,
+            )
+            shape = CosmoGridRunner.build_shape_runner(
+                config=self.config,
+                shear_sim_fmt="shear_{:d}_{:.2f}.hdf5",
+                redshift_src_list=[0.2, 0.4],
+                **self.background,
+            )
+
+        self.assertEqual(
+            (hod.cata_loader, hod.hod_populator, hod.survey_generator,
+             hod.void_finder, hod.shear_assigner),
+            (sentinel.catalog_loader, sentinel.hod_populator,
+             None, None, None),
+        )
+        self.assertEqual(hod.runner_type, "hod")
+        self.assertEqual(
+            (gal.cata_loader, gal.hod_populator, gal.survey_generator,
+             gal.void_finder, gal.shear_assigner),
+            (sentinel.catalog_loader, sentinel.hod_populator,
+             sentinel.survey_generator, None, None),
+        )
+        self.assertEqual(
+            (void.cata_loader, void.hod_populator, void.survey_generator,
+             void.void_finder, void.shear_assigner),
+            (None, None, sentinel.survey_generator,
+             sentinel.void_finder, None),
+        )
+        self.assertEqual(
+            (shape.cata_loader, shape.hod_populator, shape.survey_generator,
+             shape.void_finder, shape.shear_assigner),
+            (None, None, None, None, sentinel.shear_assigner),
         )
 
-        runner = CosmoGridRunner.for_foreground(
-            config=PipeConfig(Lbox=1000.0, Npart=1024, redshift=0.3),
-            sim_fmt="sim/{}/{}",
-            halo_fmt="halo.{}",
+    def test_void_builder_requires_no_halo_path(self):
+        runner = CosmoGridRunner.build_void_runner(
+            config=self.config,
+            sim_fmt="sim/{:d}/{:d}",
             lb_z_file=self.label_file,
-            fore_mask_fnames_dict={"boss_veto": []},
-            fore_nofz_fnames_dict={},
-            fore_survey_labels_dict={},
+            **self.foreground,
         )
+        self.assertIsNone(runner.halo_fmt)
+        self.assertIsNone(runner.cata_loader)
+        self.assertIsNone(runner.hod_populator)
 
-        self.assertIsNone(runner.shear_sim_fmt)
-        self.assertEqual(runner.back_survey_labels_dict, {})
-        self.assertEqual(runner.back_ngals_dict, {})
-        self.assertEqual(runner.tomo_labels_dict, {})
+    def test_builder_lists_all_missing_required_parameters(self):
+        with self.assertRaisesRegex(
+                ValueError, "build_shape_runner.*shear_sim_fmt.*tomo_labels_dict"):
+            CosmoGridRunner.build_shape_runner(config=self.config)
+
+    def test_partial_direct_foreground_group_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "fore_nofz_fnames_dict"):
+            CosmoGridRunner(
+                config=self.config,
+                fore_mask_fnames_dict={"boss_veto": []},
+            )
+
+    def test_direct_constructor_can_initialize_both_groups(self):
+        runner = CosmoGridRunner(
+            config=self.config,
+            sim_fmt="sim/{:d}/{:d}",
+            halo_fmt="halo.{:d}",
+            lb_z_file=self.label_file,
+            shear_sim_fmt="shear_{:d}_{:.2f}.hdf5",
+            redshift_src_list=[0.2, 0.4],
+            **self.foreground,
+            **self.background,
+        )
+        self.assertIsNotNone(runner.hod_populator)
+        self.assertIsNotNone(runner.survey_generator)
+        self.assertIsNotNone(runner.void_finder)
+        self.assertIsNotNone(runner.shear_assigner)
 
 
 class ApplyNzRegressionTests(unittest.TestCase):

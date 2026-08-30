@@ -6,90 +6,243 @@ from astropy.table import Table
 
 from handler import *
 
+
+def _require_parameters(context, **parameters):
+    missing = [name for name, value in parameters.items() if value is None]
+    if missing:
+        raise ValueError(
+            f"{context} requires: {', '.join(missing)}"
+        )
+
+
+def _group_requested(*values):
+    return any(value is not None for value in values)
+
+
+def _require_components(runner, builder_name, *component_names):
+    missing = [
+        name for name in component_names
+        if getattr(runner, name, None) is None
+    ]
+    if missing:
+        raise ValueError(
+            f"{type(runner).__name__}.{builder_name}() is required; "
+            f"missing components: {', '.join(missing)}"
+        )
+
+
 class CosmoGridRunner:
-    def __init__(self, config:PipeConfig,
-                 sim_fmt:str,
-                 halo_fmt:str,
-                 shear_sim_fmt:str,
-                 lb_z_file:str,
-                 fore_mask_fnames_dict:dict,
-                 fore_nofz_fnames_dict:dict,
-                 fore_survey_labels_dict:dict,
-                 back_mask_fnames_dict:dict,
-                 back_nofz_fnames_dict:dict,
-                 back_survey_labels_dict:dict,
-                 back_ngals_dict: dict,
-                 tomo_labels_dict: dict,
-                 redshift_src_list: list,
-                 gal_ofmt:str = None,
-                 void_ofmt:str = None,
-                 shear_ofmt:str = None
-                 ):
-
+    def __init__(
+            self, config=None, sim_fmt=None, halo_fmt=None,
+            shear_sim_fmt=None, lb_z_file=None,
+            fore_mask_fnames_dict=None, fore_nofz_fnames_dict=None,
+            fore_survey_labels_dict=None, back_mask_fnames_dict=None,
+            back_nofz_fnames_dict=None, back_survey_labels_dict=None,
+            back_ngals_dict=None, tomo_labels_dict=None,
+            redshift_src_list=None, gal_ofmt=None, void_ofmt=None,
+            shear_ofmt=None, runner_type=None):
         self.config = config
-
         self.sim_fmt = sim_fmt
         self.halo_fmt = halo_fmt
         self.lb_z_file = lb_z_file
-        self.fore_survey_labels_dict = fore_survey_labels_dict
-        assert list(fore_survey_labels_dict.keys()) == list(fore_nofz_fnames_dict.keys())
-
         self.shear_sim_fmt = shear_sim_fmt
-        self.redshift_src_list = redshift_src_list
+        self.fore_mask_fnames_dict = fore_mask_fnames_dict
+        self.fore_nofz_fnames_dict = fore_nofz_fnames_dict
+        self.fore_survey_labels_dict = fore_survey_labels_dict
+        self.back_mask_fnames_dict = back_mask_fnames_dict
+        self.back_nofz_fnames_dict = back_nofz_fnames_dict
+        self.back_survey_labels_dict = back_survey_labels_dict
         self.back_ngals_dict = back_ngals_dict
         self.tomo_labels_dict = tomo_labels_dict
-        self.back_survey_labels_dict = back_survey_labels_dict
-        assert list(back_ngals_dict.keys()) == list(back_nofz_fnames_dict.keys())
-        assert list(tomo_labels_dict.keys()) == list(back_nofz_fnames_dict.keys())
-
+        self.redshift_src_list = redshift_src_list
         self.gal_ofmt = gal_ofmt
         self.void_ofmt = void_ofmt
         self.shear_ofmt = shear_ofmt
-
-        ### initializations
-
-        self.redshift_label = self._get_redshift_label(config.redshift)
-        fore_masks = self._prepare_fore_masks(fore_mask_fnames_dict)
-        fore_nofzs = self._prepare_fore_nofzs(fore_nofz_fnames_dict)
-        back_masks = self._prepare_back_masks(back_mask_fnames_dict=back_mask_fnames_dict)
-        back_nofzs = self._prepare_back_nofzs(back_nofz_fnames_dict=back_nofz_fnames_dict)
-
-        self.cata_loader = CatalogLoader(config=config)
-        self.hod_populator = HODPopulator(config=config)
-        self.survey_generator = SurveyGenerator(config=config, masks=fore_masks, nofzs=fore_nofzs)
-        self.void_finder = VoidFinder(config=config)
-        self.shear_assigner = ShearAssigner(config=config, 
-                                            masks=back_masks, nofzs=back_nofzs)
+        self.runner_type = runner_type
+        self.redshift_label = None
+        self.cata_loader = None
+        self.hod_populator = None
+        self.survey_generator = None
+        self.void_finder = None
+        self.shear_assigner = None
+        self._initialize_runner(runner_type)
 
     @classmethod
-    def for_foreground(
-            cls, config: PipeConfig,
-            sim_fmt: str,
-            halo_fmt: str,
-            lb_z_file: str,
-            fore_mask_fnames_dict: dict,
-            fore_nofz_fnames_dict: dict,
-            fore_survey_labels_dict: dict,
-            gal_ofmt: str = None,
-            void_ofmt: str = None):
-        """Construct a runner for HOD, galaxy, and void workflows only."""
+    def build_hod_runner(
+            cls, config=None, sim_fmt=None, halo_fmt=None, lb_z_file=None):
         return cls(
-            config=config,
-            sim_fmt=sim_fmt,
-            halo_fmt=halo_fmt,
-            shear_sim_fmt=None,
+            config=config, sim_fmt=sim_fmt, halo_fmt=halo_fmt,
+            lb_z_file=lb_z_file, runner_type="hod",
+        )
+
+    @classmethod
+    def build_gal_runner(
+            cls, config=None, sim_fmt=None, halo_fmt=None, lb_z_file=None,
+            fore_mask_fnames_dict=None, fore_nofz_fnames_dict=None,
+            fore_survey_labels_dict=None, gal_ofmt=None):
+        return cls(
+            config=config, sim_fmt=sim_fmt, halo_fmt=halo_fmt,
             lb_z_file=lb_z_file,
             fore_mask_fnames_dict=fore_mask_fnames_dict,
             fore_nofz_fnames_dict=fore_nofz_fnames_dict,
             fore_survey_labels_dict=fore_survey_labels_dict,
-            back_mask_fnames_dict={},
-            back_nofz_fnames_dict={},
-            back_survey_labels_dict={},
-            back_ngals_dict={},
-            tomo_labels_dict={},
-            redshift_src_list=[],
-            gal_ofmt=gal_ofmt,
-            void_ofmt=void_ofmt,
+            gal_ofmt=gal_ofmt, runner_type="gal",
+        )
+
+    @classmethod
+    def build_void_runner(
+            cls, config=None, sim_fmt=None, lb_z_file=None,
+            fore_mask_fnames_dict=None, fore_nofz_fnames_dict=None,
+            fore_survey_labels_dict=None, void_ofmt=None):
+        return cls(
+            config=config, sim_fmt=sim_fmt, lb_z_file=lb_z_file,
+            fore_mask_fnames_dict=fore_mask_fnames_dict,
+            fore_nofz_fnames_dict=fore_nofz_fnames_dict,
+            fore_survey_labels_dict=fore_survey_labels_dict,
+            void_ofmt=void_ofmt, runner_type="void",
+        )
+
+    @classmethod
+    def build_shape_runner(
+            cls, config=None, shear_sim_fmt=None,
+            back_mask_fnames_dict=None, back_nofz_fnames_dict=None,
+            back_survey_labels_dict=None, back_ngals_dict=None,
+            tomo_labels_dict=None, redshift_src_list=None, shear_ofmt=None):
+        return cls(
+            config=config, shear_sim_fmt=shear_sim_fmt,
+            back_mask_fnames_dict=back_mask_fnames_dict,
+            back_nofz_fnames_dict=back_nofz_fnames_dict,
+            back_survey_labels_dict=back_survey_labels_dict,
+            back_ngals_dict=back_ngals_dict,
+            tomo_labels_dict=tomo_labels_dict,
+            redshift_src_list=redshift_src_list,
+            shear_ofmt=shear_ofmt, runner_type="shape",
+        )
+
+    def _initialize_runner(self, runner_type):
+        valid_types = {None, "hod", "gal", "void", "shape"}
+        if runner_type not in valid_types:
+            raise ValueError(f"unsupported runner_type: {runner_type}")
+
+        if runner_type == "hod":
+            self._validate_hod_parameters("build_hod_runner")
+            self._initialize_hod_components()
+            return
+        if runner_type == "gal":
+            self._validate_hod_parameters("build_gal_runner")
+            self._validate_foreground_parameters("build_gal_runner")
+            self._initialize_hod_components()
+            self._initialize_survey_generator()
+            return
+        if runner_type == "void":
+            _require_parameters(
+                "build_void_runner",
+                config=self.config,
+                sim_fmt=self.sim_fmt,
+                lb_z_file=self.lb_z_file,
+            )
+            self._validate_foreground_parameters("build_void_runner")
+            self._initialize_survey_generator()
+            self._initialize_void_finder()
+            return
+        if runner_type == "shape":
+            self._validate_shape_parameters("build_shape_runner")
+            self._initialize_shear_assigner()
+            return
+
+        if self.halo_fmt is not None:
+            self._validate_hod_parameters("CosmoGridRunner")
+            self._initialize_hod_components()
+        foreground_values = (
+            self.fore_mask_fnames_dict,
+            self.fore_nofz_fnames_dict,
+            self.fore_survey_labels_dict,
+        )
+        if _group_requested(*foreground_values):
+            self._validate_foreground_parameters("CosmoGridRunner")
+            _require_parameters(
+                "CosmoGridRunner",
+                config=self.config,
+                sim_fmt=self.sim_fmt,
+                lb_z_file=self.lb_z_file,
+            )
+            self._initialize_survey_generator()
+            self._initialize_void_finder()
+        background_values = (
+            self.back_mask_fnames_dict,
+            self.back_nofz_fnames_dict,
+            self.back_survey_labels_dict,
+            self.back_ngals_dict,
+            self.tomo_labels_dict,
+        )
+        if _group_requested(*background_values):
+            self._validate_shape_parameters("CosmoGridRunner")
+            self._initialize_shear_assigner()
+
+    def _validate_hod_parameters(self, context):
+        _require_parameters(
+            context,
+            config=self.config,
+            sim_fmt=self.sim_fmt,
+            halo_fmt=self.halo_fmt,
+            lb_z_file=self.lb_z_file,
+        )
+
+    def _validate_foreground_parameters(self, context):
+        _require_parameters(
+            context,
+            fore_mask_fnames_dict=self.fore_mask_fnames_dict,
+            fore_nofz_fnames_dict=self.fore_nofz_fnames_dict,
+            fore_survey_labels_dict=self.fore_survey_labels_dict,
+        )
+        if list(self.fore_survey_labels_dict) != list(self.fore_nofz_fnames_dict):
+            raise ValueError("foreground survey labels and n(z) keys must match")
+
+    def _validate_shape_parameters(self, context):
+        _require_parameters(
+            context,
+            config=self.config,
+            shear_sim_fmt=self.shear_sim_fmt,
+            back_mask_fnames_dict=self.back_mask_fnames_dict,
+            back_nofz_fnames_dict=self.back_nofz_fnames_dict,
+            back_survey_labels_dict=self.back_survey_labels_dict,
+            back_ngals_dict=self.back_ngals_dict,
+            tomo_labels_dict=self.tomo_labels_dict,
+            redshift_src_list=self.redshift_src_list,
+        )
+        if list(self.back_ngals_dict) != list(self.back_nofz_fnames_dict):
+            raise ValueError("background number-density and n(z) keys must match")
+        if list(self.tomo_labels_dict) != list(self.back_nofz_fnames_dict):
+            raise ValueError("tomographic labels and n(z) keys must match")
+
+    def _initialize_hod_components(self):
+        if self.cata_loader is not None:
+            return
+        self.redshift_label = self._get_redshift_label(self.config.redshift)
+        self.cata_loader = CatalogLoader(config=self.config)
+        self.hod_populator = HODPopulator(config=self.config)
+
+    def _initialize_survey_generator(self):
+        if self.survey_generator is not None:
+            return
+        fore_masks = self._prepare_fore_masks(self.fore_mask_fnames_dict)
+        fore_nofzs = self._prepare_fore_nofzs(self.fore_nofz_fnames_dict)
+        self.survey_generator = SurveyGenerator(
+            config=self.config, masks=fore_masks, nofzs=fore_nofzs
+        )
+
+    def _initialize_void_finder(self):
+        if self.void_finder is not None:
+            return
+        self.void_finder = VoidFinder(config=self.config)
+
+    def _initialize_shear_assigner(self):
+        if self.shear_assigner is not None:
+            return
+        back_masks = self._prepare_back_masks(self.back_mask_fnames_dict)
+        back_nofzs = self._prepare_back_nofzs(self.back_nofz_fnames_dict)
+        self.shear_assigner = ShearAssigner(
+            config=self.config, masks=back_masks, nofzs=back_nofzs
         )
         
     def _get_cosmo_instance(self, fname:str, otype="ccl") -> Union[dict, ccl.Cosmology]:
@@ -128,10 +281,20 @@ class CosmoGridRunner:
 
         return redshift_label
     
+    def _get_cosmo_fname(self, icosmo, irlz):
+        return os.path.join(self.sim_fmt.format(icosmo, irlz), "params.yml")
+
+    def _get_halo_fname(self, icosmo, irlz):
+        return os.path.join(
+            self.sim_fmt.format(icosmo, irlz),
+            self.halo_fmt.format(self.redshift_label),
+        )
+
     def _get_fnames(self, icosmo, irlz):
-        cpar_fname = os.path.join(self.sim_fmt.format(icosmo, irlz), "params.yml")
-        halo_fname = os.path.join(self.sim_fmt.format(icosmo, irlz), self.halo_fmt.format(self.redshift_label))
-        return cpar_fname, halo_fname
+        return (
+            self._get_cosmo_fname(icosmo, irlz),
+            self._get_halo_fname(icosmo, irlz),
+        )
     
     def _make_hod_param_dict(self, hod_param:np.ndarray):
         model_param_names = self.config.model_params_names
@@ -320,6 +483,7 @@ class CosmoGridRunner:
         return shear_map_dict
 
     def sample_hod_params(self, icosmo, irlz):
+        _require_components(self, "build_hod_runner", "cata_loader", "hod_populator")
         cpar_fname, halo_fname = self._get_fnames(icosmo, irlz)
         cosmo = self._get_cosmo_instance(cpar_fname, otype='ccl')
         hod_halocat = self.cata_loader.load_pkd_halocat(halo_fname, cosmo, 
@@ -334,6 +498,10 @@ class CosmoGridRunner:
     
     def gen_mock_gal(self, icosmo, irlz, ihod, ihod_param:np.ndarray, save=False):
         ''' Generate mock catalog pipeline '''
+        _require_components(
+            self, "build_gal_runner",
+            "cata_loader", "hod_populator", "survey_generator",
+        )
 
         # >>> =========   1. Load halo catalog   =========== <<<
         cpar_fname, halo_fname = self._get_fnames(icosmo, irlz)
@@ -390,9 +558,12 @@ class CosmoGridRunner:
 
     def gen_mock_void(self, icosmo, irlz, ihod, galcone_survey, dive_input, dive_output, save=False):
         ''' Generate mock void pipeline '''
+        _require_components(
+            self, "build_void_runner", "survey_generator", "void_finder",
+        )
 
         # >>> =========   1. Load cosmology   =========== <<<
-        cpar_fname, _ = self._get_fnames(icosmo, 0)
+        cpar_fname = self._get_cosmo_fname(icosmo, 0)
         cosmo = self._get_cosmo_instance(cpar_fname, otype='ccl')
         
         # >>> =========   2. Find void and apply geometry   =========== <<<
@@ -430,6 +601,7 @@ class CosmoGridRunner:
     
     def gen_mock_shear(self, icosmo, irlz=0, save=True):
         ''' Generate mock shape catalog pipeline '''
+        _require_components(self, "build_shape_runner", "shear_assigner")
         # >>> =========   1. Load shear maps   =========== <<<
         shear_maps_curr = self._load_shear_maps(icosmo)
         # >>> =========   2. Generate background positions & assign shear   =========== <<<
