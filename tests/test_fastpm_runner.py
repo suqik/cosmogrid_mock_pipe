@@ -1,10 +1,11 @@
 import gc
+import inspect
 import json
 import tempfile
 import unittest
 import warnings
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch, sentinel
 
 import numpy as np
 from astropy.io import fits
@@ -279,6 +280,174 @@ class FastPMRunnerCoreTests(unittest.TestCase):
             ]),
         )
         return mask_path, nofz_path
+
+    def test_constructor_and_builder_parameters_default_to_none(self):
+        callables = [
+            runner_module.FastPMRunner.__init__,
+            runner_module.FastPMRunner.build_hod_runner,
+            runner_module.FastPMRunner.build_gal_runner,
+            runner_module.FastPMRunner.build_void_runner,
+            runner_module.FastPMRunner.build_shape_runner,
+        ]
+        for callable_object in callables:
+            with self.subTest(callable=callable_object.__name__):
+                for name, parameter in inspect.signature(
+                        callable_object).parameters.items():
+                    if name in {"self", "cls"}:
+                        continue
+                    self.assertIsNone(parameter.default, name)
+
+    def test_each_builder_initializes_exact_component_set(self):
+        foreground = {
+            "fore_mask_fnames_dict": {"boss_veto": []},
+            "fore_nofz_fnames_dict": {},
+            "fore_survey_labels_dict": {},
+        }
+        background = {
+            "back_mask_fnames_dict": {},
+            "back_nofz_fnames_dict": {},
+            "back_survey_labels_dict": {},
+            "back_ngals_dict": {},
+            "tomo_labels_dict": {},
+        }
+        replacements = {
+            "CatalogLoader": Mock(return_value=sentinel.catalog_loader),
+            "HODPopulator": Mock(return_value=sentinel.hod_populator),
+            "SurveyGenerator": Mock(return_value=sentinel.survey_generator),
+            "VoidFinder": Mock(return_value=sentinel.void_finder),
+            "ShearAssigner": Mock(return_value=sentinel.shear_assigner),
+        }
+        with patch.multiple(runner_module, **replacements):
+            hod = runner_module.FastPMRunner.build_hod_runner(
+                config=self.config, halo_fmt=self.halo_fmt,
+                cosmo_par_fname=self.cosmo_file,
+            )
+            gal = runner_module.FastPMRunner.build_gal_runner(
+                config=self.config, halo_fmt=self.halo_fmt,
+                cosmo_par_fname=self.cosmo_file, **foreground,
+            )
+            void = runner_module.FastPMRunner.build_void_runner(
+                config=self.config, cosmo_par_fname=self.cosmo_file,
+                **foreground,
+            )
+            shape = runner_module.FastPMRunner.build_shape_runner(
+                config=self.config, cosmo_par_fname=self.cosmo_file,
+                shear_sim_fmt="product_{:06d}_{:04d}.npz",
+                **background,
+            )
+
+        expected = {
+            "hod": (sentinel.catalog_loader, sentinel.hod_populator,
+                    None, None, None),
+            "gal": (sentinel.catalog_loader, sentinel.hod_populator,
+                    sentinel.survey_generator, None, None),
+            "void": (None, None, sentinel.survey_generator,
+                     sentinel.void_finder, None),
+            "shape": (None, None, None, None, sentinel.shear_assigner),
+        }
+        for name, runner in {
+                "hod": hod, "gal": gal, "void": void, "shape": shape}.items():
+            self.assertEqual(
+                (
+                    runner.cata_loader, runner.hod_populator,
+                    runner.survey_generator, runner.void_finder,
+                    runner.shear_assigner,
+                ),
+                expected[name],
+            )
+
+    def test_void_builder_requires_no_halo_path(self):
+        runner = runner_module.FastPMRunner.build_void_runner(
+            config=self.config,
+            cosmo_par_fname=self.cosmo_file,
+            fore_mask_fnames_dict={"boss_veto": []},
+            fore_nofz_fnames_dict={},
+            fore_survey_labels_dict={},
+        )
+        self.assertIsNone(runner.halo_fmt)
+        self.assertIsNone(runner.cata_loader)
+        self.assertIsNone(runner.hod_populator)
+
+    def test_partial_direct_background_group_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "back_nofz_fnames_dict"):
+            runner_module.FastPMRunner(
+                config=self.config,
+                cosmo_par_fname=self.cosmo_file,
+                back_mask_fnames_dict={},
+            )
+
+    def test_builder_lists_all_missing_required_parameters(self):
+        with self.assertRaisesRegex(
+                ValueError, "build_shape_runner.*shear_sim_fmt.*tomo_labels_dict"):
+            runner_module.FastPMRunner.build_shape_runner(config=self.config)
+
+    def test_direct_constructor_infers_each_supplied_group(self):
+        foreground = {
+            "fore_mask_fnames_dict": {"boss_veto": []},
+            "fore_nofz_fnames_dict": {},
+            "fore_survey_labels_dict": {},
+        }
+        background = {
+            "back_mask_fnames_dict": {},
+            "back_nofz_fnames_dict": {},
+            "back_survey_labels_dict": {},
+            "back_ngals_dict": {},
+            "tomo_labels_dict": {},
+        }
+        hod = runner_module.FastPMRunner(
+            config=self.config,
+            halo_fmt=self.halo_fmt,
+            cosmo_par_fname=self.cosmo_file,
+        )
+        foreground_runner = runner_module.FastPMRunner(
+            config=self.config,
+            cosmo_par_fname=self.cosmo_file,
+            **foreground,
+        )
+        background_runner = runner_module.FastPMRunner(
+            config=self.config,
+            cosmo_par_fname=self.cosmo_file,
+            shear_sim_fmt="product_{:06d}_{:04d}.npz",
+            **background,
+        )
+        self.assertIsNotNone(hod.hod_populator)
+        self.assertIsNone(hod.survey_generator)
+        self.assertIsNotNone(foreground_runner.survey_generator)
+        self.assertIsNotNone(foreground_runner.void_finder)
+        self.assertIsNone(foreground_runner.hod_populator)
+        self.assertIsNotNone(background_runner.shear_assigner)
+        self.assertIsNone(background_runner.survey_generator)
+
+    def test_incompatible_task_method_names_required_builder(self):
+        runner = runner_module.FastPMRunner()
+        calls = [
+            ("build_hod_runner", lambda: runner.sample_hod_params(0)),
+            ("build_gal_runner", lambda: runner.gen_mock_gal(0, 0, 0, [1.0])),
+            (
+                "build_void_runner",
+                lambda: runner.gen_mock_void(
+                    0, 0, 0, np.zeros(0), "input", "output"
+                ),
+            ),
+            ("build_shape_runner", lambda: runner.gen_mock_shear(0)),
+        ]
+        for builder_name, call in calls:
+            with self.subTest(builder=builder_name):
+                with self.assertRaisesRegex(ValueError, builder_name):
+                    call()
+
+    def test_component_initializers_reuse_existing_instances(self):
+        runner = runner_module.FastPMRunner.build_hod_runner(
+            config=self.config,
+            halo_fmt=self.halo_fmt,
+            cosmo_par_fname=self.cosmo_file,
+        )
+        components = (runner.cata_loader, runner.hod_populator)
+        runner._initialize_hod_components()
+        self.assertEqual(
+            components,
+            (runner.cata_loader, runner.hod_populator),
+        )
 
     def test_cosmo0_parses_fixed_and_varying_parameters(self):
         result = self.runner._get_cosmo_instance(0, otype="dict")
@@ -749,11 +918,11 @@ class FastPMRunnerCoreTests(unittest.TestCase):
         try:
             self.runner.gen_mock_shear(icosmo=0, irlz=0, save=False)
         except ValueError as error:
-            self.assertRegex(str(error), "shear_sim_fmt")
+            self.assertRegex(str(error), "build_shape_runner")
         except Exception as error:
-            self.fail(f"missing shear_sim_fmt needs a clear ValueError: {error}")
+            self.fail(f"missing shape builder needs a clear ValueError: {error}")
         else:
-            self.fail("gen_mock_shear must require shear_sim_fmt")
+            self.fail("gen_mock_shear must require a shape builder")
 
     def test_gen_mock_shear_requires_background_configuration(self):
         self.write_shear_product(icosmo=0, irlz=0)
@@ -764,7 +933,7 @@ class FastPMRunnerCoreTests(unittest.TestCase):
             / "realization_{:04d}.npz"
         )
 
-        with self.assertRaisesRegex(ValueError, "background"):
+        with self.assertRaisesRegex(ValueError, "build_shape_runner"):
             self.runner.gen_mock_shear(icosmo=0, irlz=0, save=False)
 
     def test_gen_mock_shear_rejects_sources_beyond_map_coverage(self):

@@ -637,87 +637,225 @@ class CosmoGridRunner:
 
 class FastPMRunner:
     def __init__(
-            self, config: PipeConfig,
-            halo_fmt: str,
-            cosmo_par_fname: str,
-            fore_mask_fnames_dict: dict,
-            fore_nofz_fnames_dict: dict,
-            fore_survey_labels_dict: dict,
-            gal_ofmt: str = None,
-            void_ofmt: str = None,
-            shear_sim_fmt: str = None,
-            back_mask_fnames_dict: dict = None,
-            back_nofz_fnames_dict: dict = None,
-            back_survey_labels_dict: dict = None,
-            back_ngals_dict: dict = None,
-            tomo_labels_dict: dict = None,
-            shear_ofmt: str = None):
+            self, config=None, halo_fmt=None, cosmo_par_fname=None,
+            fore_mask_fnames_dict=None, fore_nofz_fnames_dict=None,
+            fore_survey_labels_dict=None, gal_ofmt=None, void_ofmt=None,
+            shear_sim_fmt=None, back_mask_fnames_dict=None,
+            back_nofz_fnames_dict=None, back_survey_labels_dict=None,
+            back_ngals_dict=None, tomo_labels_dict=None,
+            shear_ofmt=None, runner_type=None):
         self.config = config
         self.halo_fmt = halo_fmt
-        self.cosmo_par_fname = str(cosmo_par_fname)
+        self.cosmo_par_fname = (
+            str(cosmo_par_fname) if cosmo_par_fname is not None else None
+        )
+        self.fore_mask_fnames_dict = fore_mask_fnames_dict
+        self.fore_nofz_fnames_dict = fore_nofz_fnames_dict
         self.fore_survey_labels_dict = fore_survey_labels_dict
         self.gal_ofmt = gal_ofmt
         self.void_ofmt = void_ofmt
         self.shear_sim_fmt = shear_sim_fmt
+        self.back_mask_fnames_dict = back_mask_fnames_dict
+        self.back_nofz_fnames_dict = back_nofz_fnames_dict
+        self.back_survey_labels_dict = back_survey_labels_dict
+        self.back_ngals_dict = back_ngals_dict
+        self.tomo_labels_dict = tomo_labels_dict
         self.shear_ofmt = shear_ofmt
-        self.scale_factor = 1.0 / (1.0 + config.redshift)
+        self.runner_type = runner_type
+        self.scale_factor = None
+        self.cata_loader = None
+        self.hod_populator = None
+        self.survey_generator = None
+        self.void_finder = None
+        self.shear_assigner = None
+        self._initialize_runner(runner_type)
 
-        if set(fore_survey_labels_dict) != set(fore_nofz_fnames_dict):
+    @classmethod
+    def build_hod_runner(
+            cls, config=None, halo_fmt=None, cosmo_par_fname=None):
+        return cls(
+            config=config,
+            halo_fmt=halo_fmt,
+            cosmo_par_fname=cosmo_par_fname,
+            runner_type="hod",
+        )
+
+    @classmethod
+    def build_gal_runner(
+            cls, config=None, halo_fmt=None, cosmo_par_fname=None,
+            fore_mask_fnames_dict=None, fore_nofz_fnames_dict=None,
+            fore_survey_labels_dict=None, gal_ofmt=None):
+        return cls(
+            config=config,
+            halo_fmt=halo_fmt,
+            cosmo_par_fname=cosmo_par_fname,
+            fore_mask_fnames_dict=fore_mask_fnames_dict,
+            fore_nofz_fnames_dict=fore_nofz_fnames_dict,
+            fore_survey_labels_dict=fore_survey_labels_dict,
+            gal_ofmt=gal_ofmt,
+            runner_type="gal",
+        )
+
+    @classmethod
+    def build_void_runner(
+            cls, config=None, cosmo_par_fname=None,
+            fore_mask_fnames_dict=None, fore_nofz_fnames_dict=None,
+            fore_survey_labels_dict=None, void_ofmt=None):
+        return cls(
+            config=config,
+            cosmo_par_fname=cosmo_par_fname,
+            fore_mask_fnames_dict=fore_mask_fnames_dict,
+            fore_nofz_fnames_dict=fore_nofz_fnames_dict,
+            fore_survey_labels_dict=fore_survey_labels_dict,
+            void_ofmt=void_ofmt,
+            runner_type="void",
+        )
+
+    @classmethod
+    def build_shape_runner(
+            cls, config=None, cosmo_par_fname=None, shear_sim_fmt=None,
+            back_mask_fnames_dict=None, back_nofz_fnames_dict=None,
+            back_survey_labels_dict=None, back_ngals_dict=None,
+            tomo_labels_dict=None, shear_ofmt=None):
+        return cls(
+            config=config,
+            cosmo_par_fname=cosmo_par_fname,
+            shear_sim_fmt=shear_sim_fmt,
+            back_mask_fnames_dict=back_mask_fnames_dict,
+            back_nofz_fnames_dict=back_nofz_fnames_dict,
+            back_survey_labels_dict=back_survey_labels_dict,
+            back_ngals_dict=back_ngals_dict,
+            tomo_labels_dict=tomo_labels_dict,
+            shear_ofmt=shear_ofmt,
+            runner_type="shape",
+        )
+
+    def _initialize_runner(self, runner_type):
+        valid_types = {None, "hod", "gal", "void", "shape"}
+        if runner_type not in valid_types:
+            raise ValueError(f"unsupported runner_type: {runner_type}")
+
+        if runner_type == "hod":
+            self._validate_hod_parameters("build_hod_runner")
+            self._initialize_hod_components()
+            return
+        if runner_type == "gal":
+            self._validate_hod_parameters("build_gal_runner")
+            self._validate_foreground_parameters("build_gal_runner")
+            self._initialize_hod_components()
+            self._initialize_survey_generator()
+            return
+        if runner_type == "void":
+            _require_parameters(
+                "build_void_runner",
+                config=self.config,
+                cosmo_par_fname=self.cosmo_par_fname,
+            )
+            self._validate_foreground_parameters("build_void_runner")
+            self._initialize_survey_generator()
+            self._initialize_void_finder()
+            return
+        if runner_type == "shape":
+            self._validate_shape_parameters("build_shape_runner")
+            self._initialize_shear_assigner()
+            return
+
+        if self.halo_fmt is not None:
+            self._validate_hod_parameters("FastPMRunner")
+            self._initialize_hod_components()
+        if _group_requested(
+                self.fore_mask_fnames_dict,
+                self.fore_nofz_fnames_dict,
+                self.fore_survey_labels_dict):
+            _require_parameters(
+                "FastPMRunner",
+                config=self.config,
+                cosmo_par_fname=self.cosmo_par_fname,
+            )
+            self._validate_foreground_parameters("FastPMRunner")
+            self._initialize_survey_generator()
+            self._initialize_void_finder()
+        if _group_requested(
+                self.back_mask_fnames_dict,
+                self.back_nofz_fnames_dict,
+                self.back_survey_labels_dict,
+                self.back_ngals_dict,
+                self.tomo_labels_dict):
+            self._validate_shape_parameters("FastPMRunner")
+            self._initialize_shear_assigner()
+
+    def _validate_hod_parameters(self, context):
+        _require_parameters(
+            context,
+            config=self.config,
+            halo_fmt=self.halo_fmt,
+            cosmo_par_fname=self.cosmo_par_fname,
+        )
+
+    def _validate_foreground_parameters(self, context):
+        _require_parameters(
+            context,
+            fore_mask_fnames_dict=self.fore_mask_fnames_dict,
+            fore_nofz_fnames_dict=self.fore_nofz_fnames_dict,
+            fore_survey_labels_dict=self.fore_survey_labels_dict,
+        )
+        if set(self.fore_survey_labels_dict) != set(self.fore_nofz_fnames_dict):
             raise ValueError("foreground survey labels and n(z) keys must match")
 
-        fore_masks = self._prepare_fore_masks(fore_mask_fnames_dict)
-        fore_nofzs = self._prepare_fore_nofzs(fore_nofz_fnames_dict)
-        self.cata_loader = CatalogLoader(config=config)
-        self.hod_populator = HODPopulator(config=config)
+    def _validate_shape_parameters(self, context):
+        _require_parameters(
+            context,
+            config=self.config,
+            cosmo_par_fname=self.cosmo_par_fname,
+            shear_sim_fmt=self.shear_sim_fmt,
+            back_mask_fnames_dict=self.back_mask_fnames_dict,
+            back_nofz_fnames_dict=self.back_nofz_fnames_dict,
+            back_survey_labels_dict=self.back_survey_labels_dict,
+            back_ngals_dict=self.back_ngals_dict,
+            tomo_labels_dict=self.tomo_labels_dict,
+        )
+        if set(self.back_survey_labels_dict) != set(self.back_mask_fnames_dict):
+            raise ValueError("background survey labels and mask keys must match")
+        if set(self.back_ngals_dict) != set(self.back_nofz_fnames_dict):
+            raise ValueError("background number-density and n(z) keys must match")
+        if set(self.tomo_labels_dict) != set(self.back_nofz_fnames_dict):
+            raise ValueError("tomographic labels and n(z) keys must match")
+        for tomo_name, tomo_label in self.tomo_labels_dict.items():
+            expected_name = f"tomo{tomo_label}"
+            if tomo_name != expected_name:
+                raise ValueError(
+                    f"tomographic key {tomo_name} must be {expected_name}"
+                )
+
+    def _initialize_hod_components(self):
+        if self.cata_loader is not None:
+            return
+        self.scale_factor = 1.0 / (1.0 + self.config.redshift)
+        self.cata_loader = CatalogLoader(config=self.config)
+        self.hod_populator = HODPopulator(config=self.config)
+
+    def _initialize_survey_generator(self):
+        if self.survey_generator is not None:
+            return
+        fore_masks = self._prepare_fore_masks(self.fore_mask_fnames_dict)
+        fore_nofzs = self._prepare_fore_nofzs(self.fore_nofz_fnames_dict)
         self.survey_generator = SurveyGenerator(
-            config=config, masks=fore_masks, nofzs=fore_nofzs
+            config=self.config, masks=fore_masks, nofzs=fore_nofzs
         )
-        self.void_finder = VoidFinder(config=config)
 
-        background_config = (
-            back_mask_fnames_dict,
-            back_nofz_fnames_dict,
-            back_survey_labels_dict,
-            back_ngals_dict,
-            tomo_labels_dict,
+    def _initialize_void_finder(self):
+        if self.void_finder is not None:
+            return
+        self.void_finder = VoidFinder(config=self.config)
+
+    def _initialize_shear_assigner(self):
+        if self.shear_assigner is not None:
+            return
+        back_masks = self._prepare_back_masks(self.back_mask_fnames_dict)
+        back_nofzs = self._prepare_back_nofzs(self.back_nofz_fnames_dict)
+        self.shear_assigner = ShearAssigner(
+            config=self.config, masks=back_masks, nofzs=back_nofzs
         )
-        if any(value is not None for value in background_config):
-            if not all(value is not None for value in background_config):
-                raise ValueError(
-                    "FastPM shear setup requires all background dictionaries"
-                )
-            if set(back_survey_labels_dict) != set(back_mask_fnames_dict):
-                raise ValueError(
-                    "background survey labels and mask keys must match"
-                )
-            if set(back_ngals_dict) != set(back_nofz_fnames_dict):
-                raise ValueError(
-                    "background number-density and n(z) keys must match"
-                )
-            if set(tomo_labels_dict) != set(back_nofz_fnames_dict):
-                raise ValueError(
-                    "tomographic labels and n(z) keys must match"
-                )
-            for tomo_name, tomo_label in tomo_labels_dict.items():
-                expected_name = f"tomo{tomo_label}"
-                if tomo_name != expected_name:
-                    raise ValueError(
-                        f"tomographic key {tomo_name} must be {expected_name}"
-                    )
-
-            self.back_survey_labels_dict = back_survey_labels_dict
-            self.back_ngals_dict = back_ngals_dict
-            self.tomo_labels_dict = tomo_labels_dict
-            back_masks = self._prepare_back_masks(back_mask_fnames_dict)
-            back_nofzs = self._prepare_back_nofzs(back_nofz_fnames_dict)
-            self.shear_assigner = ShearAssigner(
-                config=config, masks=back_masks, nofzs=back_nofzs
-            )
-        else:
-            self.back_survey_labels_dict = {}
-            self.back_ngals_dict = {}
-            self.tomo_labels_dict = {}
-            self.shear_assigner = None
 
     def _prepare_fore_masks(self, mask_fnames):
         if "boss_veto" not in mask_fnames:
@@ -1027,6 +1165,9 @@ class FastPMRunner:
         return cosmo, halo_catalog
 
     def sample_hod_params(self, icosmo, irlz=0):
+        _require_components(
+            self, "build_hod_runner", "cata_loader", "hod_populator",
+        )
         _, halo_catalog = self._load_hod_halocat(icosmo)
         return self.hod_populator.find_hod_params(
             halo_catalog,
@@ -1067,6 +1208,10 @@ class FastPMRunner:
 
     def gen_mock_gal(self, icosmo, irlz, ihod, ihod_param: np.ndarray,
                      save=False):
+        _require_components(
+            self, "build_gal_runner",
+            "cata_loader", "hod_populator", "survey_generator",
+        )
         if save and self.gal_ofmt is None:
             raise ValueError("gal_ofmt is required when save=True")
 
@@ -1116,6 +1261,9 @@ class FastPMRunner:
 
     def gen_mock_void(self, icosmo, irlz, ihod, galcone_survey,
                       dive_input, dive_output, save=False):
+        _require_components(
+            self, "build_void_runner", "survey_generator", "void_finder",
+        )
         if save and self.void_ofmt is None:
             raise ValueError("void_ofmt is required when save=True")
 
@@ -1154,6 +1302,7 @@ class FastPMRunner:
         return result
 
     def gen_mock_shear(self, icosmo, irlz=0, save=False):
+        _require_components(self, "build_shape_runner", "shear_assigner")
         if self.shear_sim_fmt is None:
             raise ValueError("shear_sim_fmt is required to load shear maps")
         if save and self.shear_ofmt is None:
