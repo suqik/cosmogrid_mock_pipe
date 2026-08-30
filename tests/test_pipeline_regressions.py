@@ -1,3 +1,4 @@
+import ast
 import json
 import inspect
 import subprocess
@@ -162,6 +163,28 @@ class ScriptHODIORegressionTests(unittest.TestCase):
                     module.get_cosmo_labels_processed(self.path),
                     [1, 23],
                 )
+
+
+class DriverBuilderRegressionTests(unittest.TestCase):
+    def test_each_driver_uses_its_task_specific_builder(self):
+        expected = {
+            "run_sampling_hod.py": "build_hod_runner",
+            "run_mock_gal.py": "build_gal_runner",
+            "run_mock_void.py": "build_void_runner",
+            "run_mock_shape.py": "build_shape_runner",
+        }
+        root = Path(__file__).resolve().parents[1]
+        for filename, builder_name in expected.items():
+            with self.subTest(filename=filename):
+                tree = ast.parse((root / filename).read_text())
+                called_attributes = {
+                    node.func.attr
+                    for node in ast.walk(tree)
+                    if isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                }
+                self.assertIn(builder_name, called_attributes)
+                self.assertNotIn("for_foreground", called_attributes)
 
 
 class CosmoGridRunnerBuilderTests(unittest.TestCase):

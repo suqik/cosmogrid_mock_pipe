@@ -153,14 +153,12 @@ if __name__ == "__main__":
 
     cosmo_labels_local = comm.scatter(chunks, root=0)
 
-    cosmogrid_runner = CosmoGridRunner.for_foreground(
-                                    config=cosmogridV1_config,
-                                    sim_fmt=sim_fmt,
-                                    halo_fmt=halo_fmt,
-                                    lb_z_file=lb_z_file,
-                                    fore_mask_fnames_dict=mask_fnames_dict,
-                                    fore_nofz_fnames_dict=nofz_fnames_dict,
-                                    fore_survey_labels_dict=survey_labels_dict)
+    cosmogrid_runner = CosmoGridRunner.build_hod_runner(
+        config=cosmogridV1_config,
+        sim_fmt=sim_fmt,
+        halo_fmt=halo_fmt,
+        lb_z_file=lb_z_file,
+    )
     
     cosmo_hod_pairs_local = {}
 

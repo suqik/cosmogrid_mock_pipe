@@ -141,15 +141,16 @@ if __name__ == "__main__":
 
     cosmo_hod_pairs = load_hod_samples(cosmo_hod_file)
 
-    cosmogrid_runner = CosmoGridRunner.for_foreground(
-                                    config=cosmogridV1_config,
-                                    sim_fmt=sim_fmt,
-                                    halo_fmt=halo_fmt,
-                                    lb_z_file=lb_z_file,
-                                    fore_mask_fnames_dict=mask_fnames_dict,
-                                    fore_nofz_fnames_dict=nofz_fnames_dict,
-                                    fore_survey_labels_dict=survey_labels_dict,
-                                    gal_ofmt=galcone_fmt)
+    cosmogrid_runner = CosmoGridRunner.build_gal_runner(
+        config=cosmogridV1_config,
+        sim_fmt=sim_fmt,
+        halo_fmt=halo_fmt,
+        lb_z_file=lb_z_file,
+        fore_mask_fnames_dict=mask_fnames_dict,
+        fore_nofz_fnames_dict=nofz_fnames_dict,
+        fore_survey_labels_dict=survey_labels_dict,
+        gal_ofmt=galcone_fmt,
+    )
     
     NHOD_PER_COSMO = cosmogrid_runner.config.nhod_per_cosmo
     NRLZS_PER_COSMO = cosmogrid_runner.config.nrlzs_per_cosmo

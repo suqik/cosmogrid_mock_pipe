@@ -179,22 +179,17 @@ if __name__ == "__main__":
 
     cosmo_labels_local = comm.scatter(chunks, root=0)
 
-    cosmogrid_runner = CosmoGridRunner(config=cosmogridV1_config, 
-                                    sim_fmt=sim_fmt,
-                                    halo_fmt=halo_fmt,
-                                    shear_sim_fmt=shear_sim_fmt,
-                                    lb_z_file=lb_z_file,
-                                    fore_mask_fnames_dict=fore_mask_fnames_dict,
-                                    fore_nofz_fnames_dict=fore_nofz_fnames_dict,
-                                    fore_survey_labels_dict=fore_survey_labels_dict,
-                                    back_mask_fnames_dict=back_mask_fnames_dict,
-                                    back_nofz_fnames_dict=back_nofz_fnames_dict,
-                                    back_survey_labels_dict=back_survey_labels_dict,
-                                    back_ngals_dict=back_ngals_dict,
-                                    tomo_labels_dict=tomo_labels_dict,
-                                    redshift_src_list=redshift_src_list,
-                                    shear_ofmt=shapecone_fmt
-                                    )
+    cosmogrid_runner = CosmoGridRunner.build_shape_runner(
+        config=cosmogridV1_config,
+        shear_sim_fmt=shear_sim_fmt,
+        back_mask_fnames_dict=back_mask_fnames_dict,
+        back_nofz_fnames_dict=back_nofz_fnames_dict,
+        back_survey_labels_dict=back_survey_labels_dict,
+        back_ngals_dict=back_ngals_dict,
+        tomo_labels_dict=tomo_labels_dict,
+        redshift_src_list=redshift_src_list,
+        shear_ofmt=shapecone_fmt,
+    )
     
     NHOD_PER_COSMO = cosmogrid_runner.config.nhod_per_cosmo
     NRLZS_PER_COSMO = cosmogrid_runner.config.nrlzs_per_cosmo
