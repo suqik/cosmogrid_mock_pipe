@@ -1,12 +1,18 @@
-''' Script to generate mock shape catalog '''
+''' Script to generate FastPM mock shape catalogs '''
 
 import os
 import json
+import sys
+from pathlib import Path
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import numpy as np
 from loguru import logger
 
 from handler import PipeConfig
-from runner import CosmoGridRunner
+from runner import FastPMRunner
 
 def divide_MPI_chunks(data, size):
     k, m = divmod(len(data), size)
@@ -19,7 +25,7 @@ def get_cosmo_labels_processed(fname:str):
     '''
 
     cosmo_hod_info = load_hod_samples(fname)
-    
+
     cosmo_labels = []
     for icosmo_str in cosmo_hod_info.keys():
         cosmo_labels.append(int(icosmo_str[6:]))
@@ -40,11 +46,11 @@ def load_hod_samples(fname:str):
     return cosmo_hod_pairs
 
 if __name__ == "__main__":
-    cosmogridV1_config = PipeConfig(
+    fastpm_config = PipeConfig(
         ### fixed siminfo
-        Lbox = 900.0,
-        Npart = 832,
-        redshift = 0.5125,
+        Lbox = 1000.0,
+        Npart = 1024,
+        redshift = 0.3,
         # ### HOD model params
         model = 2, # label of model name.
         model_params_names = ('logMcut', 'sigma_logM', 'logM1', 'k', 'alpha', 'fic'),
@@ -56,7 +62,7 @@ if __name__ == "__main__":
         ngal_ref = 4e-4,
         z_space = False, ## RSD in box. Note if need RSD in survey-like, do not open this.
 
-        ### HOD param sampling 
+        ### HOD param sampling
         param_prior_low  = np.array([13, 0.1, 13, 0.00, 0.0]),
         param_prior_high = np.array([13.6, 0.6, 15.0, 10.0, 1.5]),
 
@@ -77,54 +83,18 @@ if __name__ == "__main__":
         seed_Phz = 26120,
     )
 
-    sim_fmt = "/data3/suchen/CosmoGridV1/grid/cosmo_{:06d}/run_{:d}/"
-    halo_fmt = "pkd_halos/CosmoML.{:05d}.fofstats.0"
-    shear_sim_fmt = "/data3/suchen/CosmoGridV1/raytrace/cosmo_{:06d}/nside0512/raytracing_z{:.2f}_nufft.hdf5"
-    lb_z_file = "/data3/suchen/CosmoGridV1/grid_info/label_z_table.txt"
+    cosmo_par_fname = (
+        "/Users/suqikuai777/Dataspace/FastPM/Cosmology/cosmo_list.txt"
+    )
+    shear_sim_fmt = (
+        "/Users/suqikuai777/Workspace/fast_shear_map/outputs/"
+        "dz_tomography_acceptance_v2/products/cosmo_{:06d}/"
+        "realization_{:04d}.npz"
+    )
 
     wdir = "/home/suchen/Program/CosmoGrid"
     mask_dirbase = f"{wdir}/catalogs/masks"
     nofz_dirbase = f"{wdir}/catalogs/NOfZ"
-
-    ### Geometry & masks
-    mask_boss_fdir = f"{mask_dirbase}/boss_geom/"
-
-    fore_mask_fnames_dict = {
-        # 'boss_lowz_ngc': mask_boss_fdir + "mask_DR12v5_LOWZ_North.ply", # Note LOWZE2 and LOWZE3 need LOWZ for trimming
-        # 'boss_lowze2_ngc': mask_boss_fdir + "mask_DR12v5_LOWZE2_North.ply",
-        # 'boss_lowze3_ngc': mask_boss_fdir + "mask_DR12v5_LOWZE3_North.ply",
-        'boss_cmass_ngc': mask_boss_fdir + "mask_DR12v5_CMASS_North.ply",
-        'boss_veto': [
-            mask_boss_fdir + "badfield_mask_postprocess_pixs8.ply",
-            mask_boss_fdir + "badfield_mask_unphot_seeing_extinction_pixs8_dr12.ply",
-            mask_boss_fdir + "allsky_bright_star_mask_pix.ply",
-            mask_boss_fdir + "bright_object_mask_rykoff_pix.ply", 
-            mask_boss_fdir + "collision_priority_mask_dr12.ply", 
-            mask_boss_fdir + "centerpost_mask_dr12.ply"
-        ],
-        '2dflens_south': f"{mask_dirbase}/2dflens_geom/2dFLens_mask_weight_South.fits"
-    }
-
-    ### N of Z
-    nz_fbase = f"{nofz_dirbase}/lens/"
-    fore_nofz_fnames_dict = {
-        # 'boss_lowz_ngc': nz_fbase + "nbar_DR12v5_LOWZ_North_om0p31_Pfkp10000.dat",
-        # 'boss_lowze2_ngc': nz_fbase + "nbar_DR12v5_LOWZE2_North_om0p31_Pfkp10000.dat",
-        # 'boss_lowze3_ngc': nz_fbase + "nbar_DR12v5_LOWZE3_North_om0p31_Pfkp10000.dat",
-        'boss_cmass_ngc': nz_fbase + "nbar_DR12v5_CMASS_North_om0p31_Pfkp10000.dat",
-        '2dflens_south': nz_fbase + "nbar_2dFLens_south_data.dat"
-    }
-
-    ### survey labels
-    fore_survey_labels_dict = {
-        # 'boss_lowz_ngc': 0,
-        # 'boss_lowze2_ngc': 1,
-        # 'boss_lowze3_ngc': 2,
-        'boss_cmass_ngc': 4,
-        '2dflens_south': 3
-    }
-
-    redshift_src_list = np.concatenate([np.arange(0.1,1.0,0.05), np.arange(1.0, 2.0, 0.1), np.array([2.0,2.2,2.4,2.8,3.2,3.6])])
 
     back_mask_fnames_dict = {
         # 'KiDS1000-North': f"{mask_dirbase}/mask_KiDS_North_1024.fits",
@@ -153,9 +123,14 @@ if __name__ == "__main__":
     back_nofz_fnames_dict = {'tomo4': back_nofz_ffmt.format(4),
                             'tomo5': back_nofz_ffmt.format(5)}
 
-    cosmo_hod_file = f"{wdir}/cfgs/hod/hod_5params_dict_free_ngal_cmass_v2.json"
-    shapecone_dir = "/data2/suchen/CosmoGrid/Shape/boss_ngc_2tomos"
-    shapecone_fmt = shapecone_dir + "/cosmo_{:06d}_run_0_boss_north_2tomos.fits"
+    cosmo_hod_file = (
+        "/Users/suqikuai777/Dataspace/FastPM/MockCatalogs/"
+        "cfgs/hod/cosmo_hod_pairs.json"
+    )
+    shapecone_fmt = (
+        "/Users/suqikuai777/Dataspace/FastPM/MockCatalogs/Shapes/"
+        "cosmo_{:06d}_realization_{:04d}_boss_north_2tomos.fits"
+    )
 
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
@@ -163,12 +138,13 @@ if __name__ == "__main__":
     size = comm.Get_size()
 
     if rank == 0:
-        
+
         logger.info("Read cosmo labels")
 
         cosmo_labels_global = get_cosmo_labels_processed(cosmo_hod_file)
 
         chunks = divide_MPI_chunks(cosmo_labels_global, size)
+        Path(shapecone_fmt).parent.mkdir(parents=True, exist_ok=True)
 
     else:
         chunks = None
@@ -179,21 +155,20 @@ if __name__ == "__main__":
 
     cosmo_labels_local = comm.scatter(chunks, root=0)
 
-    cosmogrid_runner = CosmoGridRunner.build_shape_runner(
-        config=cosmogridV1_config,
+    fastpm_runner = FastPMRunner.build_shape_runner(
+        config=fastpm_config,
+        cosmo_par_fname=cosmo_par_fname,
         shear_sim_fmt=shear_sim_fmt,
         back_mask_fnames_dict=back_mask_fnames_dict,
         back_nofz_fnames_dict=back_nofz_fnames_dict,
         back_survey_labels_dict=back_survey_labels_dict,
         back_ngals_dict=back_ngals_dict,
         tomo_labels_dict=tomo_labels_dict,
-        redshift_src_list=redshift_src_list,
         shear_ofmt=shapecone_fmt,
     )
-    
-    NHOD_PER_COSMO = cosmogrid_runner.config.nhod_per_cosmo
-    NRLZS_PER_COSMO = cosmogrid_runner.config.nrlzs_per_cosmo
-    
+
+    NRLZS_PER_COSMO = fastpm_runner.config.nrlzs_per_cosmo
+
     ### Loop from cosmo_labels
     for icosmo in cosmo_labels_local:
 
@@ -201,4 +176,8 @@ if __name__ == "__main__":
 
         for irlz in range(NRLZS_PER_COSMO):
 
-            _ = cosmogrid_runner.gen_mock_shear(icosmo=icosmo, save=True)
+            _ = fastpm_runner.gen_mock_shear(
+                icosmo=icosmo,
+                irlz=irlz,
+                save=True,
+            )

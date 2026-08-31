@@ -1,12 +1,18 @@
-''' Script to generate mock galaxy catalog '''
+''' Script to sample FastPM HOD parameters '''
 
 import os
 import json
+import sys
+from pathlib import Path
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import numpy as np
 from loguru import logger
 
 from handler import PipeConfig
-from runner import CosmoGridRunner
+from runner import FastPMRunner
 
 def divide_MPI_chunks(data, size):
     k, m = divmod(len(data), size)
@@ -15,17 +21,13 @@ def divide_MPI_chunks(data, size):
 
 def get_cosmo_labels_initial(fname:str):
     '''
-    Read cosmo labels from original cosmo file.
+    Read zero-based cosmology labels from the FastPM parameter table.
     '''
     if not os.path.exists(fname):
         raise FileNotFoundError(f"File {fname} not found!")
-    
-    with open(fname, "r") as f:
-        cosmo_labels = []
-        for line in f.readlines():
-            cosmo_labels.append(int(line.strip("\n").split("_")[1]))
 
-    return cosmo_labels
+    rows = np.loadtxt(fname, comments="#", ndmin=2)
+    return list(range(len(rows)))
 
 def get_hod_params_container(params_list):
     params_container = {}
@@ -55,11 +57,11 @@ def save_hod_samples(fname:str, cosmo_hod_pairs:dict):
 
 if __name__ == "__main__":
 
-    cosmogridV1_config = PipeConfig(
+    fastpm_config = PipeConfig(
         ### fixed siminfo
-        Lbox = 900.0,
-        Npart = 832,
-        redshift = 0.5125,
+        Lbox = 1000.0,
+        Npart = 1024,
+        redshift = 0.3,
         # ### HOD model params
         model = 2, # label of model name.
         model_params_names = ('logMcut', 'sigma_logM', 'logM1', 'k', 'alpha', 'fic'),
@@ -71,7 +73,7 @@ if __name__ == "__main__":
         ngal_ref = 3.5e-4,
         z_space = False, ## RSD in box. Note if need RSD in survey-like, do not open this.
 
-        ### HOD param sampling 
+        ### HOD param sampling
         param_prior_low  = np.array([13, 0.1, 13, 0.00, 0.0]),
         param_prior_high = np.array([13.6, 0.6, 15.0, 10.0, 1.5]),
 
@@ -85,49 +87,18 @@ if __name__ == "__main__":
         nofz_method = "const", # can be `rank`, `downsample`, or `const`
     )
 
-    sim_fmt = "/data3/suchen/CosmoGridV1/grid/cosmo_{:06d}/run_{:d}/"
-    halo_fmt = "pkd_halos/CosmoML.{:05d}.fofstats.0"
-    lb_z_file = "/data3/suchen/CosmoGridV1/grid_info/label_z_table.txt"
-
-    wdir = "/home/suchen/Program/CosmoGrid"
-
-    ### Geometry & masks
-    mask_boss_fdir = f"{wdir}/catalogs/masks/boss_geom/"
-
-    mask_fnames_dict = {
-        # 'boss_lowz_ngc': mask_boss_fdir + "mask_DR12v5_LOWZ_North.ply", # Note LOWZE2 and LOWZE3 need LOWZ for trimming
-        # 'boss_lowze2_ngc': mask_boss_fdir + "mask_DR12v5_LOWZE2_North.ply",
-        # 'boss_lowze3_ngc': mask_boss_fdir + "mask_DR12v5_LOWZE3_North.ply",
-        'boss_cmass_ngc': mask_boss_fdir + "mask_DR12v5_CMASS_North.ply",
-        'boss_veto': [
-            mask_boss_fdir + "badfield_mask_postprocess_pixs8.ply",
-            mask_boss_fdir + "badfield_mask_unphot_seeing_extinction_pixs8_dr12.ply",
-            mask_boss_fdir + "allsky_bright_star_mask_pix.ply",
-            mask_boss_fdir + "bright_object_mask_rykoff_pix.ply", 
-            mask_boss_fdir + "collision_priority_mask_dr12.ply", 
-            mask_boss_fdir + "centerpost_mask_dr12.ply"
-        ],
-        '2dflens_south': f"{wdir}/catalogs/masks/2dflens_geom/2dFLens_mask_weight_South.fits"
-    }
-
-    ### N of Z
-    nz_fbase = f"{wdir}/catalogs/NOfZ/lens/"
-    nofz_fnames_dict = {
-        # 'boss_lowz_ngc': nz_fbase + "nbar_DR12v5_LOWZ_North_om0p31_Pfkp10000.dat",
-        # 'boss_lowze2_ngc': nz_fbase + "nbar_DR12v5_LOWZE2_North_om0p31_Pfkp10000.dat",
-        # 'boss_lowze3_ngc': nz_fbase + "nbar_DR12v5_LOWZE3_North_om0p31_Pfkp10000.dat",
-        'boss_cmass_ngc': nz_fbase + "nbar_DR12v5_CMASS_North_om0p31_Pfkp10000.dat",
-        '2dflens_south': nz_fbase + "nbar_2dFLens_south_data.dat"
-    }
-
-    ### survey labels
-    survey_labels_dict = {
-        # 'boss_lowz_ngc': 0,
-        # 'boss_lowze2_ngc': 1,
-        # 'boss_lowze3_ngc': 2,
-        'boss_cmass_ngc': 4,
-        '2dflens_south': 3
-    }
+    cosmo_par_fname = (
+        "/Users/suqikuai777/Dataspace/FastPM/Cosmology/cosmo_list.txt"
+    )
+    halo_fmt = (
+        "/Users/suqikuai777/Dataspace/FastPM/Cosmology/"
+        "L1000_N1024_1000cosmo/cosmo{:d}/"
+        "a_{:5.4f}/rstar/out_0_wPID.list"
+    )
+    hod_samples_output = Path(
+        "/Users/suqikuai777/Dataspace/FastPM/MockCatalogs/"
+        "cfgs/hod/cosmo_hod_pairs.json"
+    )
 
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
@@ -135,14 +106,14 @@ if __name__ == "__main__":
     size = comm.Get_size()
 
     if rank == 0:
-        
+
         logger.info("Read cosmo labels")
 
-        cosmo_labels_global = get_cosmo_labels_initial("/data3/suchen/CosmoGridV1/grid/dirnames.txt")
+        cosmo_labels_global = get_cosmo_labels_initial(cosmo_par_fname)
 
         chunks = divide_MPI_chunks(cosmo_labels_global, size)
 
-        hod_samples_output = f"{wdir}/cfgs/hod/cosmo_hod_pairs.json"
+        hod_samples_output.parent.mkdir(parents=True, exist_ok=True)
 
     else:
         chunks = None
@@ -153,13 +124,12 @@ if __name__ == "__main__":
 
     cosmo_labels_local = comm.scatter(chunks, root=0)
 
-    cosmogrid_runner = CosmoGridRunner.build_hod_runner(
-        config=cosmogridV1_config,
-        sim_fmt=sim_fmt,
+    fastpm_runner = FastPMRunner.build_hod_runner(
+        config=fastpm_config,
         halo_fmt=halo_fmt,
-        lb_z_file=lb_z_file,
+        cosmo_par_fname=cosmo_par_fname,
     )
-    
+
     cosmo_hod_pairs_local = {}
 
     ### Loop from cosmo_labels
@@ -167,7 +137,7 @@ if __name__ == "__main__":
 
         logger.info(f"Rank {rank}: start processing cosmo_{icosmo:06d}")
 
-        hod_params_alive = cosmogrid_runner.sample_hod_params(icosmo, 0)
+        hod_params_alive = fastpm_runner.sample_hod_params(icosmo, 0)
 
         cosmo_hod_pairs_local[f'cosmo_{icosmo:06d}'] = get_hod_params_container(hod_params_alive)
 

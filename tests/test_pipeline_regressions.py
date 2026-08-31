@@ -2,6 +2,7 @@ import ast
 import json
 import inspect
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -115,10 +116,12 @@ class ScriptHODIORegressionTests(unittest.TestCase):
         self.tempdir.cleanup()
 
     def test_sampling_output_matches_all_mock_loaders(self):
-        import run_mock_gal
-        import run_mock_shape
-        import run_mock_void
-        import run_sampling_hod
+        from cosmogrid_runs import (
+            run_mock_gal,
+            run_mock_shape,
+            run_mock_void,
+            run_sampling_hod,
+        )
 
         first = {
             "cosmo_000001": run_sampling_hod.get_hod_params_container(
@@ -148,9 +151,7 @@ class ScriptHODIORegressionTests(unittest.TestCase):
                 self.assertEqual(module.load_hod_samples(self.path), expected)
 
     def test_all_mock_scripts_read_underscore_cosmology_keys(self):
-        import run_mock_gal
-        import run_mock_shape
-        import run_mock_void
+        from cosmogrid_runs import run_mock_gal, run_mock_shape, run_mock_void
 
         self.path.write_text(json.dumps({
             "cosmo_000001": {"HOD0": [1.0]},
@@ -240,7 +241,7 @@ class DriverBuilderRegressionTests(unittest.TestCase):
                 },
             ),
         }
-        root = Path(__file__).resolve().parents[1]
+        root = Path(__file__).resolve().parents[1] / "cosmogrid_runs"
         for filename, (builder_name, expected_keywords) in expected.items():
             with self.subTest(filename=filename):
                 tree = ast.parse((root / filename).read_text())
@@ -256,6 +257,181 @@ class DriverBuilderRegressionTests(unittest.TestCase):
                     expected_keywords=expected_keywords,
                 )
                 self.assertNotIn("for_foreground", called_attributes)
+
+    def test_each_driver_loads_directly_from_moved_path(self):
+        root = Path(__file__).resolve().parents[1] / "cosmogrid_runs"
+        filenames = (
+            "run_sampling_hod.py",
+            "run_mock_gal.py",
+            "run_mock_void.py",
+            "run_mock_shape.py",
+        )
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            for filename in filenames:
+                script = root / filename
+                command = (
+                    "import runpy; "
+                    f"runpy.run_path({str(script)!r}, "
+                    "run_name='__cosmogrid_driver_test__')"
+                )
+                result = subprocess.run(
+                    [sys.executable, "-I", "-c", command],
+                    cwd=tempdir,
+                    capture_output=True,
+                    text=True,
+                )
+                with self.subTest(filename=filename):
+                    self.assertEqual(result.returncode, 0, result.stderr)
+
+
+class FastPMRunScriptRegressionTests(unittest.TestCase):
+    def _assert_runner_builder_call(
+            self, tree, *, builder_name, expected_keywords):
+        runner_assignment = next(
+            (
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Assign)
+                and any(
+                    isinstance(target, ast.Name)
+                    and target.id == "fastpm_runner"
+                    for target in node.targets
+                )
+            ),
+            None,
+        )
+        self.assertIsNotNone(runner_assignment)
+        call = runner_assignment.value
+        self.assertIsInstance(call, ast.Call)
+        self.assertIsInstance(call.func, ast.Attribute)
+        self.assertIsInstance(call.func.value, ast.Name)
+        self.assertEqual(call.func.value.id, "FastPMRunner")
+        self.assertEqual(call.func.attr, builder_name)
+        self.assertEqual(
+            {keyword.arg for keyword in call.keywords},
+            expected_keywords,
+        )
+
+    def test_fastpm_sampling_output_matches_all_mock_loaders(self):
+        from fastpm_runs import (
+            run_mock_gal,
+            run_mock_shape,
+            run_mock_void,
+            run_sampling_hod,
+        )
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            output = Path(tempdir) / "hod.json"
+            first = {
+                "cosmo_000000": run_sampling_hod.get_hod_params_container(
+                    np.arange(12.0).reshape(2, 6)
+                ),
+            }
+            second = {
+                "cosmo_000001": run_sampling_hod.get_hod_params_container(
+                    np.arange(6.0).reshape(1, 6)
+                ),
+            }
+            samples = run_sampling_hod.merge_hod_sample_parts([first, second])
+            run_sampling_hod.save_hod_samples(output, samples)
+
+            expected = {
+                "cosmo_000000": {
+                    "HOD0": np.arange(6.0).tolist(),
+                    "HOD1": np.arange(6.0, 12.0).tolist(),
+                },
+                "cosmo_000001": {"HOD0": np.arange(6.0).tolist()},
+            }
+            self.assertEqual(json.loads(output.read_text()), expected)
+            for module in (run_mock_gal, run_mock_void, run_mock_shape):
+                with self.subTest(module=module.__name__):
+                    self.assertEqual(module.load_hod_samples(output), expected)
+
+    def test_sampling_labels_index_fastpm_cosmology_rows_from_zero(self):
+        from fastpm_runs import run_sampling_hod
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            cosmo_file = Path(tempdir) / "cosmo_list.txt"
+            cosmo_file.write_text(
+                "# hubble=0.6727 Omegab=0.0491 ns=0.9667\n"
+                "# OmegaM S8\n"
+                "0.200614 0.842526\n"
+                "0.306602 0.636991\n"
+            )
+
+            self.assertEqual(
+                run_sampling_hod.get_cosmo_labels_initial(cosmo_file),
+                [0, 1],
+            )
+
+    def test_each_fastpm_driver_uses_its_task_specific_builder(self):
+        expected = {
+            "run_sampling_hod.py": (
+                "build_hod_runner",
+                {"config", "halo_fmt", "cosmo_par_fname"},
+            ),
+            "run_mock_gal.py": (
+                "build_gal_runner",
+                {
+                    "config", "halo_fmt", "cosmo_par_fname",
+                    "fore_mask_fnames_dict", "fore_nofz_fnames_dict",
+                    "fore_survey_labels_dict", "gal_ofmt",
+                },
+            ),
+            "run_mock_void.py": (
+                "build_void_runner",
+                {
+                    "config", "cosmo_par_fname",
+                    "fore_mask_fnames_dict", "fore_nofz_fnames_dict",
+                    "fore_survey_labels_dict", "void_ofmt",
+                },
+            ),
+            "run_mock_shape.py": (
+                "build_shape_runner",
+                {
+                    "config", "cosmo_par_fname", "shear_sim_fmt",
+                    "back_mask_fnames_dict", "back_nofz_fnames_dict",
+                    "back_survey_labels_dict", "back_ngals_dict",
+                    "tomo_labels_dict", "shear_ofmt",
+                },
+            ),
+        }
+        root = Path(__file__).resolve().parents[1] / "fastpm_runs"
+        for filename, (builder_name, expected_keywords) in expected.items():
+            with self.subTest(filename=filename):
+                tree = ast.parse((root / filename).read_text())
+                self._assert_runner_builder_call(
+                    tree,
+                    builder_name=builder_name,
+                    expected_keywords=expected_keywords,
+                )
+
+    def test_each_fastpm_driver_loads_directly(self):
+        root = Path(__file__).resolve().parents[1] / "fastpm_runs"
+        filenames = (
+            "run_sampling_hod.py",
+            "run_mock_gal.py",
+            "run_mock_void.py",
+            "run_mock_shape.py",
+        )
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            for filename in filenames:
+                script = root / filename
+                command = (
+                    "import runpy; "
+                    f"runpy.run_path({str(script)!r}, "
+                    "run_name='__fastpm_driver_test__')"
+                )
+                result = subprocess.run(
+                    [sys.executable, "-I", "-c", command],
+                    cwd=tempdir,
+                    capture_output=True,
+                    text=True,
+                )
+                with self.subTest(filename=filename):
+                    self.assertEqual(result.returncode, 0, result.stderr)
 
 
 class CosmoGridRunnerBuilderTests(unittest.TestCase):

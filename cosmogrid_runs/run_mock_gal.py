@@ -1,9 +1,14 @@
-''' Script to generate mock void catalog '''
+''' Script to generate mock galaxy catalog '''
 
 import os
 import json
+import sys
+from pathlib import Path
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import numpy as np
-from astropy.table import Table
 from loguru import logger
 
 from handler import PipeConfig
@@ -69,8 +74,6 @@ if __name__ == "__main__":
 
         ### nofz
         nofz_method = "const", # can be `rank`, `downsample`, or `const`
-
-        dive_exec_path = "/home/suchen/applications/DIVE/DIVE"
     )
 
     sim_fmt = "/data3/suchen/CosmoGridV1/grid/cosmo_{:06d}/run_{:d}/"
@@ -117,12 +120,9 @@ if __name__ == "__main__":
         '2dflens_south': 3
     }
 
-    dive_input_fmt = "tmp/dive_tmps/input_rank{}.tmp"
-    dive_output_fmt = "tmp/dive_tmps/output_rank{}.tmp"
-
+    cosmo_hod_file = f"{wdir}/cfgs/hod/hod_5params_dict_free_ngal_cmass_v2.json"
     galcone_fmt = "/data2/suchen/CosmoGrid/Free_NGAL_wrsd/HOD_cmass/grid/Gals/cosmo_{:06d}_run_{:d}_HOD_{:d}_run_0_boss_north_2dflens_south.fits"
-    voidcone_fmt = "/data2/suchen/CosmoGrid/Free_NGAL_wrsd/HOD_cmass/grid/Voids/cosmo_{:06d}_run_{:d}_HOD_{:d}_run_0_boss_north_2dflens_south.fits"
-    
+
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
@@ -132,9 +132,7 @@ if __name__ == "__main__":
         
         logger.info("Read cosmo labels")
 
-        cosmo_labels_global = get_cosmo_labels_processed(
-            f"{wdir}/cfgs/hod/hod_5params_dict_free_ngal_cmass_v2.json"
-        )
+        cosmo_labels_global = get_cosmo_labels_processed(cosmo_hod_file)
 
         chunks = divide_MPI_chunks(cosmo_labels_global, size)
 
@@ -147,14 +145,17 @@ if __name__ == "__main__":
 
     cosmo_labels_local = comm.scatter(chunks, root=0)
 
-    cosmogrid_runner = CosmoGridRunner.build_void_runner(
+    cosmo_hod_pairs = load_hod_samples(cosmo_hod_file)
+
+    cosmogrid_runner = CosmoGridRunner.build_gal_runner(
         config=cosmogridV1_config,
         sim_fmt=sim_fmt,
+        halo_fmt=halo_fmt,
         lb_z_file=lb_z_file,
         fore_mask_fnames_dict=mask_fnames_dict,
         fore_nofz_fnames_dict=nofz_fnames_dict,
         fore_survey_labels_dict=survey_labels_dict,
-        void_ofmt=voidcone_fmt,
+        gal_ofmt=galcone_fmt,
     )
     
     NHOD_PER_COSMO = cosmogrid_runner.config.nhod_per_cosmo
@@ -165,12 +166,11 @@ if __name__ == "__main__":
 
         logger.info(f"Rank {rank}: start processing cosmo_{icosmo:06d}")
 
+        curr_hod_params_dict = cosmo_hod_pairs[f'cosmo_{icosmo:06d}']
+
         for irlz in range(NRLZS_PER_COSMO):
 
             for ihod in range(NHOD_PER_COSMO):
 
-                galcone = Table.read(galcone_fmt.format(icosmo, irlz, ihod))
-                _ = cosmogrid_runner.gen_mock_void(icosmo, irlz, ihod, galcone, 
-                                                          dive_input=dive_input_fmt.format(rank), 
-                                                          dive_output=dive_output_fmt.format(rank),
-                                                          save=True)
+                curr_hod_param = curr_hod_params_dict[f'HOD{ihod}']
+                _ = cosmogrid_runner.gen_mock_gal(icosmo, irlz=irlz, ihod=ihod, ihod_param=curr_hod_param, save=True)

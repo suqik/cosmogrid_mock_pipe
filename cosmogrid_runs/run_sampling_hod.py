@@ -2,6 +2,12 @@
 
 import os
 import json
+import sys
+from pathlib import Path
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import numpy as np
 from loguru import logger
 
@@ -13,33 +19,48 @@ def divide_MPI_chunks(data, size):
     chunks = [data[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] for i in range(size)]
     return chunks
 
-def get_cosmo_labels_processed(fname:str):
+def get_cosmo_labels_initial(fname:str):
     '''
-    Read cosmo labels from hod param json file.
+    Read cosmo labels from original cosmo file.
     '''
-
-    cosmo_hod_info = load_hod_samples(fname)
-
-    cosmo_labels = []
-    for icosmo_str in cosmo_hod_info.keys():
-        cosmo_labels.append(int(icosmo_str[6:]))
+    if not os.path.exists(fname):
+        raise FileNotFoundError(f"File {fname} not found!")
+    
+    with open(fname, "r") as f:
+        cosmo_labels = []
+        for line in f.readlines():
+            cosmo_labels.append(int(line.strip("\n").split("_")[1]))
 
     return cosmo_labels
 
-def load_hod_samples(fname:str):
+def get_hod_params_container(params_list):
+    params_container = {}
+    if params_list is not None:
+        for i in range(len(params_list)):
+            params_container[f'HOD{i}'] = params_list[i].tolist()
+
+    return params_container
+
+def merge_hod_sample_parts(cosmo_hod_pairs_parts):
+    cosmo_hod_pairs = {}
+    for cosmo_hod_pairs_part in cosmo_hod_pairs_parts:
+        cosmo_hod_pairs.update(cosmo_hod_pairs_part)
+
+    return cosmo_hod_pairs
+
+def save_hod_samples(fname:str, cosmo_hod_pairs:dict):
     '''
-    Load (cosmo_label, hod_params) pairs.
+    Save (cosmo_label, hod_params) pairs.
     '''
 
     if not os.path.isdir(os.path.dirname(fname)):
         raise FileNotFoundError(f"Dictionary {os.path.dirname(fname)} not found !")
 
-    with open(fname, "r") as f:
-        cosmo_hod_pairs = json.load(f)
-
-    return cosmo_hod_pairs
+    with open(fname, "w+") as f:
+        json.dump(cosmo_hod_pairs, f)
 
 if __name__ == "__main__":
+
     cosmogridV1_config = PipeConfig(
         ### fixed siminfo
         Lbox = 900.0,
@@ -114,9 +135,6 @@ if __name__ == "__main__":
         '2dflens_south': 3
     }
 
-    cosmo_hod_file = f"{wdir}/cfgs/hod/hod_5params_dict_free_ngal_cmass_v2.json"
-    galcone_fmt = "/data2/suchen/CosmoGrid/Free_NGAL_wrsd/HOD_cmass/grid/Gals/cosmo_{:06d}_run_{:d}_HOD_{:d}_run_0_boss_north_2dflens_south.fits"
-
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
@@ -126,9 +144,11 @@ if __name__ == "__main__":
         
         logger.info("Read cosmo labels")
 
-        cosmo_labels_global = get_cosmo_labels_processed(cosmo_hod_file)
+        cosmo_labels_global = get_cosmo_labels_initial("/data3/suchen/CosmoGridV1/grid/dirnames.txt")
 
         chunks = divide_MPI_chunks(cosmo_labels_global, size)
+
+        hod_samples_output = f"{wdir}/cfgs/hod/cosmo_hod_pairs.json"
 
     else:
         chunks = None
@@ -139,32 +159,28 @@ if __name__ == "__main__":
 
     cosmo_labels_local = comm.scatter(chunks, root=0)
 
-    cosmo_hod_pairs = load_hod_samples(cosmo_hod_file)
-
-    cosmogrid_runner = CosmoGridRunner.build_gal_runner(
+    cosmogrid_runner = CosmoGridRunner.build_hod_runner(
         config=cosmogridV1_config,
         sim_fmt=sim_fmt,
         halo_fmt=halo_fmt,
         lb_z_file=lb_z_file,
-        fore_mask_fnames_dict=mask_fnames_dict,
-        fore_nofz_fnames_dict=nofz_fnames_dict,
-        fore_survey_labels_dict=survey_labels_dict,
-        gal_ofmt=galcone_fmt,
     )
     
-    NHOD_PER_COSMO = cosmogrid_runner.config.nhod_per_cosmo
-    NRLZS_PER_COSMO = cosmogrid_runner.config.nrlzs_per_cosmo
-    
+    cosmo_hod_pairs_local = {}
+
     ### Loop from cosmo_labels
     for icosmo in cosmo_labels_local:
 
         logger.info(f"Rank {rank}: start processing cosmo_{icosmo:06d}")
 
-        curr_hod_params_dict = cosmo_hod_pairs[f'cosmo_{icosmo:06d}']
+        hod_params_alive = cosmogrid_runner.sample_hod_params(icosmo, 0)
 
-        for irlz in range(NRLZS_PER_COSMO):
+        cosmo_hod_pairs_local[f'cosmo_{icosmo:06d}'] = get_hod_params_container(hod_params_alive)
 
-            for ihod in range(NHOD_PER_COSMO):
+    logger.info(f"Rank {rank} finished.")
 
-                curr_hod_param = curr_hod_params_dict[f'HOD{ihod}']
-                _ = cosmogrid_runner.gen_mock_gal(icosmo, irlz=irlz, ihod=ihod, ihod_param=curr_hod_param, save=True)
+    cosmo_hod_pairs_global = comm.gather(cosmo_hod_pairs_local, root=0)
+
+    if rank == 0:
+        merged_hod_samples = merge_hod_sample_parts(cosmo_hod_pairs_global)
+        save_hod_samples(hod_samples_output, merged_hod_samples)
