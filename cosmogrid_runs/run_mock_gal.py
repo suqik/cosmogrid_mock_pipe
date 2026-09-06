@@ -102,13 +102,14 @@ if __name__ == "__main__":
     }
 
     ### N of Z
-    nz_fbase = f"{wdir}/catalogs/NOfZ/lens/"
+    nz_boss_fbase = f"{wdir}/catalogs/NOfZ/boss_nofzs/"
+    nz_2dflens_fbase = f"{wdir}/catalogs/NOfZ/2dflens_nofzs/"
     nofz_fnames_dict = {
-        # 'boss_lowz_ngc': nz_fbase + "nbar_DR12v5_LOWZ_North_om0p31_Pfkp10000.dat",
-        # 'boss_lowze2_ngc': nz_fbase + "nbar_DR12v5_LOWZE2_North_om0p31_Pfkp10000.dat",
-        # 'boss_lowze3_ngc': nz_fbase + "nbar_DR12v5_LOWZE3_North_om0p31_Pfkp10000.dat",
-        'boss_cmass_ngc': nz_fbase + "nbar_DR12v5_CMASS_North_om0p31_Pfkp10000.dat",
-        '2dflens_south': nz_fbase + "nbar_2dFLens_south_data.dat"
+        # 'boss_lowz_ngc': nz_boss_fbase + "nbar_DR12v5_LOWZ_North_om0p31_Pfkp10000.dat",
+        # 'boss_lowze2_ngc': nz_boss_fbase + "nbar_DR12v5_LOWZE2_North_om0p31_Pfkp10000.dat",
+        # 'boss_lowze3_ngc': nz_boss_fbase + "nbar_DR12v5_LOWZE3_North_om0p31_Pfkp10000.dat",
+        'boss_cmass_ngc': nz_boss_fbase + "nbar_DR12v5_CMASS_North_om0p31_Pfkp10000.dat",
+        '2dflens_south': nz_2dflens_fbase + "nbar_2dFLens_south_data.dat"
     }
 
     ### survey labels
