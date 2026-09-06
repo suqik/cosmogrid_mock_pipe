@@ -61,21 +61,6 @@ class GGLCalculator:
         
         return rp_min_mpc, rp_max_mpc
     
-    # def _gen_rp_bins(self, hubble):
-    #     rp_bins = self.config.rp_bins
-    #     bin_type = self.config.bin_type
-    #     rp_min_mpc, rp_max_mpc = self._get_rps_mpc(hubble)
-
-    #     if bin_type == "linear":
-    #         bin_edges = np.linspace(rp_min_mpc, rp_max_mpc, rp_bins+1)
-    #         # bin_ctrs = 0.5 * (bin_edges[1:] + bin_edges[:-1])
-        
-    #     if bin_type == "log":
-    #         bin_edges = np.geomspace(rp_min_mpc, rp_max_mpc, rp_bins+1)
-    #         # bin_ctrs = np.sqrt(bin_edges[1:] * bin_edges[:-1])
-    
-    #     return bin_edges
-    
     def get_bin_edges(self, hubble, Rvoid_mpch=1.0):
         rp_bins = self.config.rp_bins
         bin_type = self.config.bin_type
@@ -176,12 +161,12 @@ class GGLCalculator:
         
         return esd
     
-    def estimate_jackknife_cov(self, lens_table, rand_table=None):
+    def estimate_jackknife_cov(self, lens_table, rand_table=None, return_samples=False):
         njk = self.config.njk
         if njk <= 2:
             raise ValueError("Jackknife subsamples should be larger than 2!")
         centers = compute_jackknife_fields(
-            lens_table, 100, weights=np.sum(lens_table['sum 1'], axis=1))
+            lens_table, njk, weights=np.sum(lens_table['sum 1'], axis=1))
         
         if rand_table is not None:
             compute_jackknife_fields(rand_table, centers)
@@ -190,7 +175,15 @@ class GGLCalculator:
         else:
             esd_kwargs = {'random_subtraction': False}
 
-        jk_cov = jackknife_resampling(excess_surface_density, 
-                                      lens_table, **esd_kwargs)
+        if return_samples:
+            jk_cov, jk_samples = jackknife_resampling(excess_surface_density, 
+                                      lens_table, return_samples=return_samples, 
+                                      **esd_kwargs)
+            
+            return jk_cov, jk_samples
+        else:
+            jk_cov = jackknife_resampling(excess_surface_density, 
+                                      lens_table, return_samples=return_samples, 
+                                      **esd_kwargs)
         
-        return jk_cov
+            return jk_cov
