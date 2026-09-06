@@ -14,24 +14,13 @@
 
 ## 2. Git 状态(截至 2026-09-05)
 
-- `master` = `origin/master` @ `993c2aa feat: organize CosmoGrid and FastPM run scripts`(已同步,无领先/落后)
+- `master` = `origin/master`(已同步推送,本会话新增 4 个提交):
+  - `b812dd2` feat: add AbacusRunner and source-clustered shape catalogs
+  - `6fba979` feat: add bootstrap void resampling to CosmoGridRunner
+  - `fb93422` chore: update CosmoGrid run scripts with KiDS1000 background config
+  - `d10dfa0` feat: add return_samples option to GGL jackknife covariance
 - 备份分支:`wip/local-backup`(de15dfe)—— 同步远程前本地旧结构修改的完整快照,可随时回溯
-- **已提交并推送(Abacus 相关工作,本会话)**:
-  - `handler.py`:source clustering(`gen_gal_positions(method="density")`、`mass_maps`/`z_to_mass_label`、`PipeConfig.seed_pos`)
-  - `runner.py`:`AbacusRunner` 类 + mass map 加载
-  - `abacus_runs/run_mock_shape.py`、`STATUS.md`
-- **仍未提交(本地保留)**:
-
-| 文件 | 内容 |
-|---|---|
-| `cosmogrid_runs/run_mock_gal.py` | 前景 n(z) 路径拆分(boss_nofzs / 2dflens_nofzs) |
-| `cosmogrid_runs/run_mock_shape.py` | KiDS1000-North 背景巡天切换、n(z) 路径、输出目录 kids1000_north_2tomos |
-| `cosmogrid_runs/run_mock_void.py` | ngal_ref=4e-4、nofz_method=downsample、sigma_* 参数、n(z) 路径 |
-| `cosmogrid_runs/run_sampling_hod.py` | 同上配置修改 |
-| `measurements/calculator.py` | jackknife `return_samples` 选项、njk 参数修复 |
-| `runner.py`(局部 hunk) | `CosmoGridRunner._load_shear_maps` 打印、`gen_mock_void_boostrap` 方法 |
-
-- 未跟踪:`measurements/ngals_list.txt`、`measurements/showup/`、`notebooks/`
+- 工作区已无未提交的跟踪文件改动;未跟踪(未纳入版本控制):`measurements/ngals_list.txt`、`measurements/showup/`、`notebooks/`
 - 测试:90/90 通过(`PYTHONPATH=/usr/lib/python3/dist-packages .pixi/envs/default/bin/python -m pytest tests/`)
 
 ## 3. 代码结构
@@ -117,10 +106,9 @@ mass map 全部 40 壳层到位后,应替换为完整的两列对应文件(`shel
 ## 9. 待办 / 已知事项
 
 1. **mass_maps 只下载了 shell_12/13**,density 目录仅为测试版;需补齐 40 壳层并更新 `z_to_mass_label`
-2. 其余本地改动(`cosmogrid_runs/*` 配置迁移、`measurements/calculator.py` jackknife、`runner.py` 的 void bootstrap hunk)**尚未提交/推送**
-3. `measurements/run_ggl.py` 的 `srcs_fmt` 仍指向 CosmoGrid 目录,未接 Abacus 目录
-4. `assign_shear_vals` 存在静默截断 z 超出覆盖源的历史隐患(AbacusRunner 已在前置截断规避;CosmoGrid/FastPM 路径未动)
-5. `notebooks/`、`measurements/showup/` 等未跟踪文件未整理
+2. `measurements/run_ggl.py` 的 `srcs_fmt` 仍指向 CosmoGrid 目录,未接 Abacus 目录
+3. `assign_shear_vals` 存在静默截断 z 超出覆盖源的历史隐患(AbacusRunner 已在前置截断规避;CosmoGrid/FastPM 路径未动)
+4. `notebooks/`、`measurements/showup/`、`measurements/ngals_list.txt` 等未跟踪文件未整理/未纳入版本控制
 
 ## 10. 常用运行命令
 
