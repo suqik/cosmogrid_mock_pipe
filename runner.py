@@ -1356,3 +1356,351 @@ class FastPMRunner:
         if save:
             Table(result).write(self.shear_ofmt.format(icosmo, irlz))
         return result
+
+
+class AbacusRunner:
+    '''
+    Runner that generates shape (background source) catalogs from Abacus
+    raytracing shear maps. Only the shape pipeline is supported: no
+    galaxy/HOD or void generation is available.
+
+    Abacus shear products are stored in ``/data2/suchen/Abacus/shear_maps``
+    as pairs of FITS binary tables (``gamma1_rt_z{z:.2f}.fits`` /
+    ``gamma2_rt_z{z:.2f}.fits``). Each file contains one full-sky map
+    flattened into 196608 rows x 1024 float32 pixels, i.e. a HEALPix map
+    with RING ordering at NSIDE=4096 in celestial coordinates.
+
+    Parameters
+    ----------
+    config: PipeConfig
+        Pipeline configuration (shape noise ``sigma_e`` / ``seed_SN``,
+        photo-z error ``sigma_phz`` / ``seed_Phz``, ...).
+    shear_map_fmt: str
+        Format string of the Abacus shear maps with two placeholders: the
+        gamma component index (1 or 2) and the source redshift, e.g.
+        ``"/data2/suchen/Abacus/shear_maps/gamma{:d}_rt_z{:.2f}.fits"``.
+    redshift_src_list: list
+        Source-plane redshifts (shell centers) of the maps to load, in
+        ascending order. Each shell costs ~1.6 GB (gamma1 + gamma2 at
+        NSIDE=4096), so only request the shells that the source n(z)
+        actually covers.
+    back_mask_fnames_dict, back_nofz_fnames_dict, back_survey_labels_dict,
+    back_ngals_dict, tomo_labels_dict: dict
+        Background survey configuration (same as ``CosmoGridRunner``).
+    shear_ofmt: str
+        Output file path of the shape catalog (used as-is, no formatting).
+    '''
+
+    def __init__(
+            self, config=None, shear_map_fmt=None,
+            back_mask_fnames_dict=None, back_nofz_fnames_dict=None,
+            back_survey_labels_dict=None, back_ngals_dict=None,
+            tomo_labels_dict=None, redshift_src_list=None, shear_ofmt=None,
+            mass_map_fmt=None, z_to_mass_label=None,
+            position_method="random", bias=1.0):
+        self.config = config
+        self.shear_map_fmt = shear_map_fmt
+        self.back_mask_fnames_dict = back_mask_fnames_dict
+        self.back_nofz_fnames_dict = back_nofz_fnames_dict
+        self.back_survey_labels_dict = back_survey_labels_dict
+        self.back_ngals_dict = back_ngals_dict
+        self.tomo_labels_dict = tomo_labels_dict
+        self.redshift_src_list = redshift_src_list
+        self.shear_ofmt = shear_ofmt
+        self.mass_map_fmt = mass_map_fmt
+        self.z_to_mass_label = z_to_mass_label
+        self.position_method = position_method
+        self.bias = bias
+        self.shear_assigner = None
+
+        if position_method not in ("random", "density"):
+            raise ValueError(
+                f"unsupported position_method: {position_method}"
+            )
+        self._validate_shape_parameters("build_shape_runner")
+        self._initialize_shear_assigner()
+
+    @classmethod
+    def build_shape_runner(
+            cls, config=None, shear_map_fmt=None,
+            back_mask_fnames_dict=None, back_nofz_fnames_dict=None,
+            back_survey_labels_dict=None, back_ngals_dict=None,
+            tomo_labels_dict=None, redshift_src_list=None, shear_ofmt=None,
+            mass_map_fmt=None, z_to_mass_label=None,
+            position_method="random", bias=1.0):
+        return cls(
+            config=config,
+            shear_map_fmt=shear_map_fmt,
+            back_mask_fnames_dict=back_mask_fnames_dict,
+            back_nofz_fnames_dict=back_nofz_fnames_dict,
+            back_survey_labels_dict=back_survey_labels_dict,
+            back_ngals_dict=back_ngals_dict,
+            tomo_labels_dict=tomo_labels_dict,
+            redshift_src_list=redshift_src_list,
+            shear_ofmt=shear_ofmt,
+            mass_map_fmt=mass_map_fmt,
+            z_to_mass_label=z_to_mass_label,
+            position_method=position_method,
+            bias=bias,
+        )
+
+    def _validate_shape_parameters(self, context):
+        _require_parameters(
+            context,
+            config=self.config,
+            shear_map_fmt=self.shear_map_fmt,
+            back_mask_fnames_dict=self.back_mask_fnames_dict,
+            back_nofz_fnames_dict=self.back_nofz_fnames_dict,
+            back_survey_labels_dict=self.back_survey_labels_dict,
+            back_ngals_dict=self.back_ngals_dict,
+            tomo_labels_dict=self.tomo_labels_dict,
+            redshift_src_list=self.redshift_src_list,
+        )
+        if set(self.back_survey_labels_dict) != set(self.back_mask_fnames_dict):
+            raise ValueError(
+                "background survey labels and mask keys must match"
+            )
+        if set(self.back_ngals_dict) != set(self.back_nofz_fnames_dict):
+            raise ValueError(
+                "background number-density and n(z) keys must match"
+            )
+        if set(self.tomo_labels_dict) != set(self.back_nofz_fnames_dict):
+            raise ValueError("tomographic labels and n(z) keys must match")
+        for tomo_name, tomo_label in self.tomo_labels_dict.items():
+            expected_name = f"tomo{tomo_label}"
+            if tomo_name != expected_name:
+                raise ValueError(
+                    f"tomographic key {tomo_name} must be {expected_name}"
+                )
+        redshifts = np.asarray(self.redshift_src_list, dtype=float)
+        if redshifts.size < 2:
+            raise ValueError(
+                "redshift_src_list must contain at least two shells"
+            )
+        if np.any(redshifts[1:] <= redshifts[:-1]):
+            raise ValueError("redshift_src_list must be strictly ascending")
+        if self.position_method == "density":
+            _require_parameters(
+                "build_shape_runner (method='density')",
+                mass_map_fmt=self.mass_map_fmt,
+                z_to_mass_label=self.z_to_mass_label,
+            )
+
+    def _load_mass_maps(self):
+        '''
+        Load Abacus mass maps (``shell_{:d}.fits``, ``SIGNAL`` column) and
+        convert them to full-sky overdensity maps: delta = Sigma/<Sigma> - 1.
+        '''
+        print("Load Abacus mass maps", flush=True)
+
+        labels = sorted(set(self.z_to_mass_label.values()))
+        mass_maps = {}
+        for label in labels:
+            fname = self.mass_map_fmt.format(label)
+            try:
+                hdus = fits.open(fname, memmap=True)
+            except OSError as err:
+                raise ValueError(
+                    f"{fname} is not a valid FITS file ({err}); "
+                    "it may be corrupted or incompletely written"
+                ) from err
+            with hdus:
+                if len(hdus) < 2 or not isinstance(
+                        hdus[1], fits.BinTableHDU):
+                    raise ValueError(
+                        f"{fname} must contain a binary table extension"
+                    )
+                header = hdus[1].header
+                if header.get("PIXTYPE", "").strip() != "HEALPIX":
+                    raise ValueError(f"{fname} is not a HEALPix map")
+                if header.get("ORDERING", "").strip() != "RING":
+                    raise ValueError(
+                        f"{fname} uses {header.get('ORDERING')} "
+                        "ordering; only RING is supported"
+                    )
+                nside = int(header["NSIDE"])
+                signal = np.asarray(hdus[1].data["SIGNAL"]).ravel()
+            npix = 12 * nside * nside
+            if signal.size != npix:
+                raise ValueError(
+                    f"{fname} has {signal.size} pixels, expected "
+                    f"{npix} for NSIDE={nside}"
+                )
+            mean = float(signal.mean(dtype=np.float64))
+            if not np.isfinite(mean) or mean <= 0:
+                raise ValueError(
+                    f"{fname} has non-finite or non-positive mean: {mean}"
+                )
+            delta = signal.astype(np.float32) / np.float32(mean)
+            delta -= np.float32(1.0)
+            mass_maps[label] = delta
+
+        return mass_maps
+
+    def _initialize_shear_assigner(self):
+        if self.shear_assigner is not None:
+            return
+        back_masks = self._prepare_back_masks(self.back_mask_fnames_dict)
+        back_nofzs = self._prepare_back_nofzs(self.back_nofz_fnames_dict)
+        mass_maps = None
+        if self.mass_map_fmt is not None and self.z_to_mass_label is not None:
+            mass_maps = self._load_mass_maps()
+        self.shear_assigner = ShearAssigner(
+            config=self.config, masks=back_masks, nofzs=back_nofzs,
+            mass_maps=mass_maps, z_to_mass_label=self.z_to_mass_label,
+        )
+
+    def _prepare_back_masks(self, mask_fnames):
+        masks = {}
+        for survey_name, mask_fname in mask_fnames.items():
+            if survey_name in {"KiDS1000-North", "KiDS1000-South"}:
+                mask = loadFitsMaps(mask_fname)
+                mask = mask[0]
+                mask = np.where(mask > 0, 1, 0)
+            elif survey_name == "FullSky":
+                nside = 1024
+                mask = np.ones(12 * nside * nside)
+            elif survey_name == "boss_cmass_ngc":
+                mask = pymangle.Mangle(mask_fname)
+            else:
+                raise ValueError(
+                    f"Unsupported background survey mask: {survey_name}"
+                )
+            masks[survey_name] = mask
+        return masks
+
+    def _prepare_back_nofzs(self, nofz_fnames):
+        nofzs = {}
+        for tomo_name, nofz_fname in nofz_fnames.items():
+            tmp = np.loadtxt(nofz_fname)
+            nofzs[tomo_name] = make_nofz(tmp[:, 0], tmp[:, 1])
+        return nofzs
+
+    def _load_shear_maps(self):
+        '''
+        Load Abacus gamma1/gamma2 HEALPix maps into the ``shear_map_dict``
+        consumed by ``ShearAssigner.assign_shear``.
+        '''
+        print("Load Abacus shear maps", flush=True)
+
+        shear_map_dict = {}
+        for ishell, redshift_src in enumerate(self.redshift_src_list):
+            shear_map_dict[f"shell{ishell}"] = {"redshift": redshift_src}
+            for comp in (1, 2):
+                fname = self.shear_map_fmt.format(comp, redshift_src)
+                try:
+                    hdus = fits.open(fname, memmap=True)
+                except OSError as err:
+                    raise ValueError(
+                        f"{fname} is not a valid FITS file ({err}); "
+                        "it may be corrupted or incompletely written"
+                    ) from err
+                with hdus:
+                    if len(hdus) < 2 or not isinstance(
+                            hdus[1], fits.BinTableHDU):
+                        raise ValueError(
+                            f"{fname} must contain a binary table extension"
+                        )
+                    header = hdus[1].header
+                    if header.get("PIXTYPE", "").strip() != "HEALPIX":
+                        raise ValueError(f"{fname} is not a HEALPix map")
+                    if header.get("ORDERING", "").strip() != "RING":
+                        raise ValueError(
+                            f"{fname} uses {header.get('ORDERING')} "
+                            "ordering; only RING is supported"
+                        )
+                    nside = int(header["NSIDE"])
+                    map_data = np.asarray(hdus[1].data["T"]).reshape(-1)
+                npix = 12 * nside * nside
+                if map_data.size != npix:
+                    raise ValueError(
+                        f"{fname} has {map_data.size} pixels, expected "
+                        f"{npix} for NSIDE={nside}"
+                    )
+                shear_map_dict[f"shell{ishell}"][f"gamma{comp}"] = map_data
+
+        return shear_map_dict
+
+    def gen_mock_shear(self, save=True):
+        ''' Generate mock shape catalog pipeline from Abacus shear maps '''
+        if self.shear_assigner is None:
+            raise ValueError(
+                "AbacusRunner.build_shape_runner() is required; "
+                "missing components: shear_assigner"
+            )
+        if save and self.shear_ofmt is None:
+            raise ValueError("shear_ofmt is required when save=True")
+
+        # >>> =========   1. Load shear maps   =========== <<<
+        shear_maps_curr = self._load_shear_maps()
+
+        # >>> =========   2. Generate background positions & assign shear   =========== <<<
+        shapecone_survey = []
+        ### Loop of surveys
+        for isurvey_name, isurvey_label in self.back_survey_labels_dict.items():
+
+            print(f"\nMaking {isurvey_name}-like shape mock", flush=True)
+
+            ### Loop of tomographic bins
+            for itomo_name, itomo_label in self.tomo_labels_dict.items():
+
+                shapecone_curr = self.shear_assigner.gen_gal_positions(
+                    ngal=self.back_ngals_dict[itomo_name],
+                    tomo_label=itomo_label,
+                    survey_name=isurvey_name,
+                    survey_label=isurvey_label,
+                    method=self.position_method,
+                    bias=self.bias,
+                    seed=self.config.seed_pos)
+
+                ### Drop sources outside shear-map coverage BEFORE assigning
+                ### shear; assign_shear_vals would otherwise drop rows
+                ### silently and desynchronize the catalog.
+                source_redshifts = np.asarray(shapecone_curr["z_true"])
+                shell_redshifts = np.asarray([
+                    shear_maps_curr[f"shell{index}"]["redshift"]
+                    for index in range(len(shear_maps_curr))
+                ])
+                max_redshift = (
+                    shell_redshifts[-1]
+                    + shell_redshifts[-1]
+                    - shell_redshifts[-2]
+                )
+                zcover = (
+                    np.isfinite(source_redshifts)
+                    & (source_redshifts >= 0)
+                    & (source_redshifts < max_redshift)
+                )
+                ndropped = int((~zcover).sum())
+                if ndropped:
+                    print(
+                        f"Tomo {itomo_label}: drop {ndropped} sources "
+                        f"outside shear-map coverage [0, {max_redshift})",
+                        flush=True,
+                    )
+                shapecone_curr = shapecone_curr[zcover]
+                if len(shapecone_curr) == 0:
+                    raise ValueError(
+                        "all sources are outside shear-map coverage "
+                        f"[0, {max_redshift})"
+                    )
+
+                shapecone_curr = self.shear_assigner.assign_shear(
+                    shapecone_curr, shear_maps_curr)
+                ### FIXME: Support assigning weights by weight map in the future
+                shapecone_curr = self.shear_assigner.assign_weights(
+                    shapecone_curr, weight_type='unity')
+
+                print(f"Tomo {itomo_label}: {len(shapecone_curr)}", flush=True)
+
+                shapecone_survey.append(shapecone_curr)
+
+        shapecone_survey = np.concatenate(shapecone_survey)
+
+        # >>> =========   3. (Optional) Save to file   =========== <<<
+        if save:
+            shapecone_survey_tb = Table(shapecone_survey)
+            shapecone_survey_tb.write(self.shear_ofmt)
+            del shapecone_survey_tb
+
+        return shapecone_survey

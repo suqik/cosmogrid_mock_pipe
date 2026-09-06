@@ -70,6 +70,7 @@ class PipeConfig:
     seed_SN: int = 0
     sigma_phz: float = 0.01
     seed_Phz: int = 26120
+    seed_pos: int = 0
 
     dive_exec_path:str = "/home/suchen/applications/DIVE/DIVE"
 
@@ -537,10 +538,16 @@ class VoidFinder:
 
     
 class ShearAssigner:
-    def __init__(self, config:PipeConfig, masks:dict, nofzs:dict):
+    def __init__(self, config:PipeConfig, masks:dict, nofzs:dict,
+                 mass_maps:dict=None, z_to_mass_label:dict=None):
         self.config = config
         self.masks = masks
         self.nofzs = nofzs
+        # mass maps for density-based position sampling:
+        # mass_maps: {label: full-sky overdensity map (HEALPix RING)}
+        # z_to_mass_label: {source-shell redshift: mass-map label}
+        self.mass_maps = mass_maps
+        self.z_to_mass_label = z_to_mass_label
 
     def _check_mask(self, survey_name):
         if not survey_name in list(self.masks.keys()):
@@ -565,13 +572,45 @@ class ShearAssigner:
             array_list_output.append(iarray[select])
         return tuple(array_list_output)
     
-    def gen_gal_positions(self, ngal:float, survey_name:str, tomo_label:int, survey_label:int):
+    def gen_gal_positions(self, ngal:float, survey_name:str, tomo_label:int, survey_label:int,
+                          method:str="random", bias:float=1.0, seed:int=None):
+        '''
+        Generate background galaxy angular positions.
+
+        Parameters
+        ----------
+        method: str
+            "random": uniformly sample positions inside the survey mask
+            (original behavior). "density": Poisson-sample positions from
+            the mass maps, i.e. source clustering.
+        bias: float
+            Linear galaxy bias used by method="density"; the expected
+            number of galaxies per cell scales as (1 + bias * delta).
+        seed: int
+            RNG seed shared by the Poisson cell counts and the uniform
+            in-cell placement (and the in-shell redshift draws).
+        '''
+        if method not in ("random", "density"):
+            raise ValueError(f"unsupported position sampling method: {method}")
+
         mask = self.masks[survey_name]
-        mask_type = self._guess_mask_type(mask)
-        sigma_phz = self.config.sigma_phz
-        seed_Phz = self.config.seed_Phz
         nofz = self.nofzs[f'tomo{tomo_label}']
 
+        if method == "random":
+            return self._gen_gal_position_random(ngal, mask, nofz,
+                                                 tomo_label, survey_label, seed)
+        return self._gen_gal_position_from_map(ngal, mask, nofz,
+                                               tomo_label, survey_label,
+                                               bias, seed)
+
+    def _gen_gal_position_random(self, ngal:float, mask, nofz:dict,
+                                 tomo_label:int, survey_label:int, seed:int=None):
+        if seed is not None:
+            np.random.seed(seed)
+        sigma_phz = self.config.sigma_phz
+        seed_Phz = self.config.seed_Phz
+
+        mask_type = self._guess_mask_type(mask)
         match mask_type:
             case "healpix":
                 cat_ra, cat_dec = gen_angle_positions_from_healpix(ngal, mask)
@@ -593,6 +632,239 @@ class ShearAssigner:
         bg_galcat['survey'] = survey_label
 
         return bg_galcat
+
+    def _gen_gal_position_from_map(self, ngal:float, mask, nofz:dict,
+                                   tomo_label:int, survey_label:int,
+                                   bias:float, seed:int=None):
+        '''
+        Source-clustered position sampling (GLASS-style): the expected
+        number of galaxies per cell is ``ngal * A_cell * f_shell *
+        (1 + bias * delta)``, where ``delta`` is the overdensity of the
+        mass map assigned to the source shell. Cell counts are Poisson
+        draws; positions are uniform within each cell. The same RNG seed
+        drives the Poisson counts, the in-cell placement and the in-shell
+        redshift draws (photo-z error keeps using seed_Phz).
+        '''
+        if self.mass_maps is None or self.z_to_mass_label is None:
+            raise ValueError(
+                "mass_maps and z_to_mass_label are required "
+                "for method='density'"
+            )
+        if self._guess_mask_type(mask) != 'healpix':
+            raise ValueError(
+                "method='density' currently supports healpix masks only"
+            )
+        if not self.mass_maps:
+            raise ValueError("mass_maps is empty")
+
+        cell_nside = hp.npix2nside(len(next(iter(self.mass_maps.values()))))
+        mask_nside = hp.npix2nside(len(mask))
+        if cell_nside < mask_nside:
+            raise ValueError(
+                "mass-map resolution must be finer than the survey mask"
+            )
+        # upsample the survey mask onto the mass-map grid
+        # (majority rule for boundary cells)
+        mask_up = hp.ud_grade(mask.astype(np.float64), cell_nside,
+                              order_in="RING", order_out="RING")
+        cells = np.argwhere(mask_up >= 0.5).flatten()
+        if len(cells) == 0:
+            raise ValueError("no survey cells after mask upsampling")
+        cell_area_arcmin2 = (
+            hp.nside2pixarea(cell_nside) * (180.0/np.pi)**2 * 3600.0
+        )
+
+        rng = np.random.default_rng(seed)
+
+        # source shells and their edges (same convention as assign_shear_vals)
+        shell_zs = np.array(sorted(self.z_to_mass_label.keys()), dtype=float)
+        if len(shell_zs) < 2:
+            raise ValueError(
+                "z_to_mass_label must contain at least two source shells"
+            )
+        dz_last = shell_zs[-1] - shell_zs[-2]
+        edges = np.concatenate([
+            [0.0],
+            0.5 * (shell_zs[1:] + shell_zs[:-1]),
+            [shell_zs[-1] + dz_last],
+        ])
+
+        # rebin the tomo n(z) histogram into the source-shell edges
+        zedges = np.asarray(nofz['zedges'])
+        nz_vals = np.asarray(nofz['nz'])
+        f_shell = np.zeros(len(edges) - 1)
+        for i, nzi in enumerate(nz_vals):
+            if nzi <= 0:
+                continue
+            a, b = zedges[i], zedges[i + 1]
+            for j, (lo, hi) in enumerate(zip(edges[:-1], edges[1:])):
+                overlap = min(b, hi) - max(a, lo)
+                if overlap > 0:
+                    f_shell[j] += nzi * overlap / (b - a)
+        fsum = f_shell.sum()
+        if fsum <= 0:
+            raise ValueError(
+                f"tomo {tomo_label} n(z) has no overlap with source shells"
+            )
+        f_shell /= fsum
+
+        ra_parts, dec_parts, ztrue_parts = [], [], []
+        nclipped = 0
+        for ishell, (lo, hi) in enumerate(zip(edges[:-1], edges[1:])):
+            f_s = f_shell[ishell]
+            if f_s <= 0:
+                continue
+            label = self.z_to_mass_label[float(shell_zs[ishell])]
+            if label not in self.mass_maps:
+                raise ValueError(f"mass map for label {label} not loaded")
+            delta = self.mass_maps[label][cells]
+            lam = ngal * cell_area_arcmin2 * f_s * (1.0 + bias * delta)
+            nclipped += int(np.sum(lam < 0))
+            lam = np.clip(lam, 0.0, None)
+            counts = rng.poisson(lam)
+            sel = counts > 0
+            if not np.any(sel):
+                continue
+            ra_c, dec_c = self._uniform_in_cells(cells[sel], counts[sel],
+                                                 cell_nside, rng)
+            z_true = rng.uniform(lo, hi, len(ra_c))
+            ra_parts.append(ra_c)
+            dec_parts.append(dec_c)
+            ztrue_parts.append(z_true)
+
+        if nclipped:
+            print(
+                f"Tomo {tomo_label}: {nclipped} cell-shell expectations "
+                "clipped at 0", flush=True,
+            )
+        if not ra_parts:
+            raise ValueError(f"no galaxies sampled for tomo {tomo_label}")
+
+        cat_ra = np.concatenate(ra_parts)
+        cat_dec = np.concatenate(dec_parts)
+        cat_z = np.concatenate(ztrue_parts)
+
+        # photo-z error, same recipe as gen_redshifts_from_nofz
+        sigma_phz = self.config.sigma_phz
+        if sigma_phz is not None:
+            rng_phz = np.random.default_rng(self.config.seed_Phz)
+            cat_zph = cat_z + rng_phz.normal(0.0, sigma_phz, len(cat_z))
+            phys_cut = cat_zph > 0
+            cat_ra = cat_ra[phys_cut]
+            cat_dec = cat_dec[phys_cut]
+            cat_z = cat_z[phys_cut]
+            cat_zph = cat_zph[phys_cut]
+        else:
+            cat_zph = cat_z
+
+        bg_galcat = np.zeros((len(cat_ra),), dtype=bgal_type)
+        bg_galcat['ra'] = cat_ra
+        bg_galcat['dec'] = cat_dec
+        bg_galcat['z'] = cat_zph
+        bg_galcat['z_true'] = cat_z
+        bg_galcat['sigz'] = sigma_phz
+        bg_galcat['tomo'] = tomo_label
+        bg_galcat['survey'] = survey_label
+
+        return bg_galcat
+
+    @staticmethod
+    def _uniform_in_cells(cells, counts, nside, rng, max_rounds=20):
+        '''
+        Place ``counts[i]`` points uniformly inside HEALPix cell
+        ``cells[i]`` via rejection sampling: points are drawn uniformly
+        over the cell corner bounding box (RA x sin(dec)) and kept only
+        if they fall back into the requested cell.
+        '''
+        counts = np.asarray(counts).astype(np.int64)
+        cells = np.asarray(cells)
+        if len(cells) == 0 or int(counts.sum()) == 0:
+            return np.empty(0), np.empty(0)
+
+        # healpy 1.18 boundaries(): scalar -> (3, 4) [xyz, corner];
+        # array -> (ncell, 3, 4) [cell, xyz, corner]
+        corners = hp.boundaries(nside, cells)
+        if corners.ndim == 2:
+            corners = np.transpose(corners, (1, 0))[None, ...]  # (1, 4, 3)
+        else:
+            corners = np.transpose(corners, (0, 2, 1))          # (n, 4, 3)
+        ra_c, dec_c = hp.vec2ang(corners.reshape(-1, 3), lonlat=True)
+        ra_c = np.asarray(ra_c).reshape(len(cells), 4)
+        dec_c = np.asarray(dec_c).reshape(len(cells), 4)
+
+        ra_min = ra_c.min(axis=1)
+        ra_max = ra_c.max(axis=1)
+        wrap = (ra_max - ra_min) > 180.0
+        if np.any(wrap):
+            ra_shifted = np.where(ra_c < 180.0, ra_c + 360.0, ra_c)
+            ra_min = np.where(wrap, ra_shifted.min(axis=1), ra_min)
+            ra_max = np.where(wrap, ra_shifted.max(axis=1), ra_max)
+        dec_min = dec_c.min(axis=1)
+        dec_max = dec_c.max(axis=1)
+        # sample dec uniformly via the polar angle theta = 90 - dec,
+        # which is monotonic for cells straddling the equator
+        # (same trick as gen_angle_positions_from_healpix)
+        theta_min = 90.0 - dec_max
+        theta_max = 90.0 - dec_min
+        cos_lo = np.cos(np.deg2rad(theta_max))
+        cos_hi = np.cos(np.deg2rad(theta_min))
+
+        remaining = counts.copy()
+        ra_out, dec_out = [], []
+        for _ in range(max_rounds):
+            active = remaining > 0
+            if not np.any(active):
+                break
+            idx = np.nonzero(active)[0]
+            # oversample the bounding boxes (box acceptance ~0.5)
+            n_extra = np.ceil(remaining[idx] * 3.0 + 5.0).astype(np.int64)
+            idx_rep = np.repeat(idx, n_extra)
+            n_draw = int(n_extra.sum())
+            u = rng.uniform(0.0, 1.0, n_draw)
+            v = rng.uniform(0.0, 1.0, n_draw)
+            ra_draw = (
+                ra_min[idx_rep] + u * (ra_max[idx_rep] - ra_min[idx_rep])
+            ) % 360.0
+            cos_draw = cos_lo[idx_rep] + v * (cos_hi[idx_rep] - cos_lo[idx_rep])
+            theta_draw = np.rad2deg(np.arccos(np.clip(cos_draw, -1.0, 1.0)))
+            dec_draw = 90.0 - theta_draw
+
+            back = hp.ang2pix(nside, ra_draw, dec_draw, lonlat=True)
+            ok = back == cells[idx_rep]
+            ra_ok = ra_draw[ok]
+            dec_ok = dec_draw[ok]
+            idx_ok = idx_rep[ok]
+
+            order = np.argsort(idx_ok, kind="stable")
+            idx_s = idx_ok[order]
+            ra_s = ra_ok[order]
+            dec_s = dec_ok[order]
+            starts = np.searchsorted(idx_s, idx)
+            ends = np.searchsorted(idx_s, idx, side="right")
+            take = np.minimum(ends - starts, remaining[idx])
+            take_total = int(take.sum())
+            if take_total:
+                offsets = np.repeat(starts, take)
+                add = np.arange(take_total) - np.repeat(
+                    np.cumsum(take) - take, take)
+                pos_idx = offsets + add
+                ra_out.append(ra_s[pos_idx])
+                dec_out.append(dec_s[pos_idx])
+                remaining[idx] -= take
+
+        if np.any(remaining > 0):
+            # extremely unlikely; fall back to the cell centers
+            left = remaining > 0
+            print(
+                f"rejection sampling exhausted after {max_rounds} rounds; "
+                f"placing {int(remaining[left].sum())} points at cell centers",
+                flush=True,
+            )
+            ra0, dec0 = hp.pix2ang(nside, cells[left], lonlat=True)
+            ra_out.append(np.repeat(ra0, remaining[left]))
+            dec_out.append(np.repeat(dec0, remaining[left]))
+
+        return np.concatenate(ra_out), np.concatenate(dec_out)
     
     def assign_shear(self, bg_galcat:np.ndarray, shear_map_dict:list):
         sigma_e = self.config.sigma_e
