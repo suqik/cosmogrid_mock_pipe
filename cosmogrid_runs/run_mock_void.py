@@ -60,7 +60,7 @@ if __name__ == "__main__":
         verbose = True,
         num_seeds = 1,
         init_seed = 33000, ## initial seed for generating galaxy catalog
-        ngal_ref = 3.5e-4,
+        ngal_ref = 4e-4,
         z_space = False, ## RSD in box. Note if need RSD in survey-like, do not open this.
 
         ### HOD param sampling 
@@ -74,9 +74,14 @@ if __name__ == "__main__":
         rsd_lightcone = True,
 
         ### nofz
-        nofz_method = "const", # can be `rank`, `downsample`, or `const`
+        nofz_method = "downsample", # can be `rank`, `downsample`, or `const`,
 
-        dive_exec_path = "/home/suchen/applications/DIVE/DIVE"
+        dive_exec_path = "/home/suchen/applications/DIVE/DIVE",
+
+        sigma_e = 0.3,
+        seed_SN = 0,
+        sigma_phz = 0.01,
+        seed_Phz = 26120,
     )
 
     sim_fmt = "/data3/suchen/CosmoGridV1/grid/cosmo_{:06d}/run_{:d}/"
@@ -105,13 +110,14 @@ if __name__ == "__main__":
     }
 
     ### N of Z
-    nz_fbase = f"{wdir}/catalogs/NOfZ/lens/"
+    nz_boss_fbase = f"{wdir}/catalogs/NOfZ/boss_nofzs/"
+    nz_2dflens_fbase = f"{wdir}/catalogs/NOfZ/2dflens_nofzs/"
     nofz_fnames_dict = {
-        # 'boss_lowz_ngc': nz_fbase + "nbar_DR12v5_LOWZ_North_om0p31_Pfkp10000.dat",
-        # 'boss_lowze2_ngc': nz_fbase + "nbar_DR12v5_LOWZE2_North_om0p31_Pfkp10000.dat",
-        # 'boss_lowze3_ngc': nz_fbase + "nbar_DR12v5_LOWZE3_North_om0p31_Pfkp10000.dat",
-        'boss_cmass_ngc': nz_fbase + "nbar_DR12v5_CMASS_North_om0p31_Pfkp10000.dat",
-        '2dflens_south': nz_fbase + "nbar_2dFLens_south_data.dat"
+        # 'boss_lowz_ngc': nz_boss_fbase + "nbar_DR12v5_LOWZ_North_om0p31_Pfkp10000.dat",
+        # 'boss_lowze2_ngc': nz_boss_fbase + "nbar_DR12v5_LOWZE2_North_om0p31_Pfkp10000.dat",
+        # 'boss_lowze3_ngc': nz_boss_fbase + "nbar_DR12v5_LOWZE3_North_om0p31_Pfkp10000.dat",
+        'boss_cmass_ngc': nz_boss_fbase + "nbar_DR12v5_CMASS_North_om0p31_Pfkp10000.dat",
+        '2dflens_south': nz_2dflens_fbase + "nbar_2dFLens_south_data.dat"
     }
 
     ### survey labels
