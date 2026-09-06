@@ -463,6 +463,9 @@ class CosmoGridRunner:
         return gen_func
 
     def _load_shear_maps(self, icosmo, irlz=0):
+
+        print("Load shear maps", flush=True)
+
         shear_map_dict = {}
         for ishell in range(len(self.redshift_src_list)):
             redshift_src = self.redshift_src_list[ishell]
@@ -598,7 +601,35 @@ class CosmoGridRunner:
             del voidcone_survey_tb
 
         return voidcone_survey
-    
+
+    def gen_mock_void_boostrap(self, icosmo, irlz, ihod,
+                      galcone_survey, dive_input, dive_output, save=False,
+                      bs_nsamples=10, bs_seed=9857
+                      ):
+        ''' Generate bootstrap resampled void catalog subsamples '''
+
+        rng = np.random.default_rng(seed=bs_seed)
+        nsize_origin = len(galcone_survey)
+        voidcone_survey_bs_subsamples = []
+        for ibs in range(bs_nsamples):
+            sub_galcone_survey = rng.choice(galcone_survey, len(galcone_survey), replace=True)
+            sampled_indice = rng.choice(np.arange(nsize_origin), nsize_origin, replace=True)
+            sampled_indice = np.unique(sampled_indice)
+            sub_galcone_survey = galcone_survey[sampled_indice]
+            print(f"Bootstrap resampling: {ibs}, curr sample size: {len(sub_galcone_survey)}")
+            sub_voidcone_survey = self.gen_mock_void(icosmo, irlz, ihod,
+                                                     sub_galcone_survey, dive_input, dive_output,
+                                                     save=False)
+            if save:
+                sub_voidcone_survey = Table(sub_voidcone_survey)
+                sub_voidcone_survey.write(self.void_ofmt.format(icosmo, irlz, ihod, ibs))
+                del sub_voidcone_survey
+            else:
+                voidcone_survey_bs_subsamples.append(sub_voidcone_survey)
+
+        if not save:
+            return voidcone_survey_bs_subsamples
+
     def gen_mock_shear(self, icosmo, irlz=0, save=True):
         ''' Generate mock shape catalog pipeline '''
         _require_components(self, "build_shape_runner", "shear_assigner")
