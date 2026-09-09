@@ -315,7 +315,14 @@ class CosmoGridRunner:
 
     def _get_sampling_seed_offset(self, icosmo, irlz):
         return icosmo * self.config.nrlzs_per_cosmo + irlz
-    
+
+    def _get_shape_seed(self, seed_ini, icosmo, irlz, itomo):
+        ''' Reconstruct a per-catalog real seed from an initial seed. '''
+        nrlzs = self.config.nrlzs_per_cosmo
+        ntomo = len(self.tomo_labels_dict)
+        offset = icosmo * nrlzs * ntomo + irlz * ntomo + itomo
+        return (int(seed_ini) + offset) % 2**32
+
     def _prepare_fore_masks(self, fore_mask_fnames_dict:dict):
         masks = {}
         survey_part_names = list(fore_mask_fnames_dict.keys())
@@ -612,11 +619,14 @@ class CosmoGridRunner:
             print(f"\nMaking {isurvey_name}-like shape mock", flush=True)
 
             ### Loop of tomographic bins
-            for itomo_name, itomo_label in self.tomo_labels_dict.items():
+            for itomo, (itomo_name, itomo_label) in enumerate(self.tomo_labels_dict.items()):
 
-                shapecone_curr = self.shear_assigner.gen_gal_positions(ngal=self.back_ngals_dict[itomo_name], tomo_label=itomo_label, 
-                                                                       survey_name=isurvey_name, survey_label=isurvey_label)
-                shapecone_curr = self.shear_assigner.assign_shear(shapecone_curr, shear_maps_curr)
+                seed_Phz = self._get_shape_seed(self.config.seed_Phz_ini, icosmo, irlz, itomo)
+                seed_SN = self._get_shape_seed(self.config.seed_SN_ini, icosmo, irlz, itomo)
+
+                shapecone_curr = self.shear_assigner.gen_gal_positions(ngal=self.back_ngals_dict[itomo_name], tomo_label=itomo_label,
+                                                                       survey_name=isurvey_name, survey_label=isurvey_label, seed_Phz=seed_Phz)
+                shapecone_curr = self.shear_assigner.assign_shear(shapecone_curr, shear_maps_curr, seed_SN=seed_SN)
                 ### FIXME: Support assigning weights by weight map in the future
                 shapecone_curr = self.shear_assigner.assign_weights(shapecone_curr, weight_type='unity')
 
@@ -1003,10 +1013,12 @@ class FastPMRunner:
 
     def _get_halo_fname(self, icosmo: int) -> str:
         halo_fname = self.halo_fmt.format(icosmo, self.scale_factor)
-        if os.path.basename(halo_fname) != "out_0_wPID.list":
+        if os.path.basename(halo_fname) not in (
+            "out_0_wPID.list", "out_0_wsub.list",
+        ):
             raise ValueError(
-                "FastPM halo catalog must be out_0_wPID.list: "
-                f"{halo_fname}"
+                "FastPM halo catalog must be out_0_wPID.list or "
+                f"out_0_wsub.list: {halo_fname}"
             )
         if not os.path.isfile(halo_fname):
             raise FileNotFoundError(
@@ -1152,6 +1164,13 @@ class FastPMRunner:
     def _get_sampling_seed_offset(self, icosmo, irlz):
         return icosmo * self.config.nrlzs_per_cosmo + irlz
 
+    def _get_shape_seed(self, seed_ini, icosmo, irlz, itomo):
+        ''' Reconstruct a per-catalog real seed from an initial seed. '''
+        nrlzs = self.config.nrlzs_per_cosmo
+        ntomo = len(self.tomo_labels_dict)
+        offset = icosmo * nrlzs * ntomo + irlz * ntomo + itomo
+        return (int(seed_ini) + offset) % 2**32
+
     def _load_hod_halocat(self, icosmo):
         cosmo = self._get_cosmo_instance(icosmo, otype="ccl")
         halo_fname = self._get_halo_fname(icosmo)
@@ -1256,7 +1275,9 @@ class FastPMRunner:
         result = np.concatenate(survey_catalogs)
 
         if save:
-            Table(result).write(self.gal_ofmt.format(icosmo, irlz, ihod))
+            Table(result).write(
+                self.gal_ofmt.format(icosmo, irlz, ihod), overwrite=True
+            )
         return result
 
     def gen_mock_void(self, icosmo, irlz, ihod, galcone_survey,
@@ -1298,7 +1319,9 @@ class FastPMRunner:
         result = np.concatenate(survey_catalogs)
 
         if save:
-            Table(result).write(self.void_ofmt.format(icosmo, irlz, ihod))
+            Table(result).write(
+                self.void_ofmt.format(icosmo, irlz, ihod), overwrite=True
+            )
         return result
 
     def gen_mock_shear(self, icosmo, irlz=0, save=False):
@@ -1318,12 +1341,23 @@ class FastPMRunner:
         shear_maps = self._load_shear_maps(icosmo, irlz)
         survey_catalogs = []
         for survey_name, survey_label in self.back_survey_labels_dict.items():
-            for tomo_name, tomo_label in self.tomo_labels_dict.items():
+            for itomo, (tomo_name, tomo_label) in enumerate(self.tomo_labels_dict.items()):
+                # Truncate the tomo n(z) at z=2 (user-directed for tomo5;
+                # the shear maps cover up to z=2.1, and tomo3/4 tails
+                # beyond that are negligible: 0.3% / 0.1%).
+                seed_Phz = self._get_shape_seed(
+                    self.config.seed_Phz_ini, icosmo, irlz, itomo
+                )
+                seed_SN = self._get_shape_seed(
+                    self.config.seed_SN_ini, icosmo, irlz, itomo
+                )
                 catalog = self.shear_assigner.gen_gal_positions(
                     ngal=self.back_ngals_dict[tomo_name],
                     survey_name=survey_name,
                     tomo_label=tomo_label,
                     survey_label=survey_label,
+                    zmax=2.0,
+                    seed_Phz=seed_Phz,
                 )
                 source_redshifts = np.asarray(catalog["z_true"])
                 shell_redshifts = np.asarray([
@@ -1345,7 +1379,7 @@ class FastPMRunner:
                         f"[0, {max_redshift})"
                     )
                 catalog = self.shear_assigner.assign_shear(
-                    catalog, shear_maps
+                    catalog, shear_maps, seed_SN=seed_SN
                 )
                 catalog = self.shear_assigner.assign_weights(
                     catalog, weight_type="unity"
@@ -1354,5 +1388,7 @@ class FastPMRunner:
 
         result = np.concatenate(survey_catalogs)
         if save:
-            Table(result).write(self.shear_ofmt.format(icosmo, irlz))
+            Table(result).write(
+                self.shear_ofmt.format(icosmo, irlz), overwrite=True
+            )
         return result

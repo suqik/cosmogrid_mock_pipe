@@ -53,12 +53,18 @@ def gen_angle_positions_from_mangle(ngal:float, mask:pymangle.Mangle):
 
     return picked_ra, picked_dec
 
-def gen_redshifts_from_nofz(Ngal:float, nofz:dict|float|list, photo_z_err=None, seed=None):
+def gen_redshifts_from_nofz(Ngal:float, nofz:dict|float|list, photo_z_err=None, seed=None, zmax=None):
     if isinstance(nofz, dict):
         # sample redshift
         zsamples = []
         zedges = nofz['zedges']
         nz = nofz['nz']
+
+        if zmax is not None:
+            # truncate the n(z) at zmax and renormalize
+            # (bins starting at >= zmax are removed, so all sampled z < zmax)
+            keep = zedges[:-1] < zmax
+            nz = nz[keep] / nz[keep].sum()
 
         for i in range(len(nz)-1):
             iNgal = int(Ngal*nz[i])

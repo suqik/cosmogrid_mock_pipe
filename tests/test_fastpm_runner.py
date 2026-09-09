@@ -113,8 +113,12 @@ class VoidSurveyGenerator:
 class FakeShearAssigner:
     def __init__(self, redshifts=(0.2,)):
         self.redshifts = np.asarray(redshifts)
+        self.seed_Phz_history = []
+        self.seed_SN_history = []
 
-    def gen_gal_positions(self, ngal, survey_name, tomo_label, survey_label):
+    def gen_gal_positions(self, ngal, survey_name, tomo_label, survey_label,
+                          zmax=None, seed_Phz=None):
+        self.seed_Phz_history.append(seed_Phz)
         result = np.zeros(
             len(self.redshifts),
             dtype=[
@@ -132,7 +136,8 @@ class FakeShearAssigner:
         result["z_true"] = self.redshifts
         return result
 
-    def assign_shear(self, catalog, shear_maps):
+    def assign_shear(self, catalog, shear_maps, seed_SN=None):
+        self.seed_SN_history.append(seed_SN)
         result = catalog.copy()
         result["g1"] = shear_maps["shell0"]["gamma1"][0]
         result["map_count"] = len(shear_maps)
@@ -489,6 +494,52 @@ class FastPMRunnerCoreTests(unittest.TestCase):
     def test_seed_offsets_retain_realization_index(self):
         self.assertEqual(self.runner._get_sampling_seed_offset(2, 3), 5)
         self.assertEqual(self.runner._get_hod_seed_offset(2, 3, 4), 54)
+
+    def test_shape_seed_reconstructs_per_catalog_real_seed(self):
+        self.runner.tomo_labels_dict = {"tomo3": 3, "tomo4": 4, "tomo5": 5}
+        self.runner.config.nrlzs_per_cosmo = 2
+        # seed = (seed_ini + icosmo*nrlzs*ntomo + irlz*ntomo + itomo) % 2**32
+        self.assertEqual(
+            self.runner._get_shape_seed(10, 2, 1, 1),
+            10 + 2 * 2 * 3 + 1 * 3 + 1,
+        )
+        seeds = [
+            self.runner._get_shape_seed(0, 0, 0, itomo)
+            for itomo in range(3)
+        ]
+        self.assertEqual(len(set(seeds)), 3)
+        self.assertLess(self.runner._get_shape_seed(2**32 - 1, 1, 0, 0), 2**32)
+
+    def test_gen_mock_shear_passes_per_catalog_seeds_to_assigner(self):
+        self.write_shear_product(icosmo=1, irlz=2)
+        self.runner.shear_sim_fmt = str(
+            self.root
+            / "products"
+            / "cosmo_{:06d}"
+            / "realization_{:04d}.npz"
+        )
+        self.runner.shear_ofmt = str(self.root / "shape_{:d}_{:d}.fits")
+        self.runner.back_survey_labels_dict = {"survey_a": 9}
+        self.runner.back_ngals_dict = {"tomo_low": 1.25, "tomo_high": 2.5}
+        self.runner.tomo_labels_dict = {"tomo_low": 1, "tomo_high": 2}
+        fake = FakeShearAssigner()
+        self.runner.shear_assigner = fake
+
+        self.runner.gen_mock_shear(icosmo=1, irlz=2, save=False)
+
+        ntomo = len(self.runner.tomo_labels_dict)
+        self.assertEqual(fake.seed_Phz_history, [
+            self.runner._get_shape_seed(
+                self.runner.config.seed_Phz_ini, 1, 2, itomo
+            )
+            for itomo in range(ntomo)
+        ])
+        self.assertEqual(fake.seed_SN_history, [
+            self.runner._get_shape_seed(
+                self.runner.config.seed_SN_ini, 1, 2, itomo
+            )
+            for itomo in range(ntomo)
+        ])
 
     def test_invalid_cosmology_label_is_rejected(self):
         with self.assertRaisesRegex(IndexError, "cosmology label"):

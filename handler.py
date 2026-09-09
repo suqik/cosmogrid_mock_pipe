@@ -67,9 +67,9 @@ class PipeConfig:
     nofz_method: str = "downsample"
 
     sigma_e: float = 0.3
-    seed_SN: int = 0
+    seed_SN_ini: int = 0 # initial seed for shape noise, per-catalog seeds reconstructed in the runners
     sigma_phz: float = 0.01
-    seed_Phz: int = 26120
+    seed_Phz_ini: int = 26120 # initial seed for photo-z error, per-catalog seeds reconstructed in the runners
 
     dive_exec_path:str = "/home/suchen/applications/DIVE/DIVE"
 
@@ -196,14 +196,18 @@ class HODPopulator:
                 "sampled HOD pool contains fewer rows than nhod_per_cosmo"
             )
         hod_params_alive = []
-        
+
+        ## Precompute the HMF once per cosmology (independent of HOD params)
+        massbin, NM = compute_HMF(halo_mass, Lbox)
+
         ## Main loop to find HOD parameters that matches reference galaxy number density
 
         for curr_hod_params in hod_params_pool:
             if self.config.model == 0:
                 ngal_mock, Nsat_frac = get_ngal(
                     halo_mass=halo_mass, Lbox=Lbox, redshift=redshift,
-                    model_lb=self.config.model, model_params_names=self.config.model_params_names, hod_param_vals=curr_hod_params, 
+                    model_lb=self.config.model, model_params_names=self.config.model_params_names, hod_param_vals=curr_hod_params,
+                    massbin=massbin, NM=NM,
                 )
                 
                 if np.abs(ngal_mock - self.config.ngal_ref) < 0.1 and Nsat_frac < 0.3: # avoid too many satellite galaxies in one halo
@@ -213,24 +217,20 @@ class HODPopulator:
 
             ## update fic
             if self.config.model == 2 or self.config.model == 3 or self.config.model == 4:
-                # ngal_mock, Nsat_frac = get_ngal(
-                #     halo_mass=halo_mass, Lbox=Lbox, redshift=redshift,
-                #     model_lb=self.config.model, model_params_names=self.config.model_params_names, hod_param_vals=curr_hod_params, 
-                # )
+                ngal_mock, Nsat_frac = get_ngal(
+                    halo_mass=halo_mass, Lbox=Lbox, redshift=redshift,
+                    model_lb=self.config.model, model_params_names=self.config.model_params_names, hod_param_vals=curr_hod_params,
+                    massbin=massbin, NM=NM,
+                )
 
-                # f_ic = self.config.ngal_ref/ngal_mock
+                f_ic = self.config.ngal_ref/ngal_mock
 
-                # ### FIXME: lower bound of f_ic may need careful consideration.
-                # if f_ic > 0 and f_ic <= 1.0: # and Nsat_frac < 0.3: # avoid too many satellite galaxies in one halo
-                #     count += 1
-                #     idx += 1
-                #     ### here we append f_ic to construct total HOD parameters
-                #     hod_params_alive.append(list(curr_hod_params)+[f_ic])
-                # else:
-                #     idx += 1
-                #     continue
-
-                hod_params_alive.append(list(curr_hod_params)+[1.0])
+                ### f_ic must be positive and not exceed 0.3
+                if f_ic > 0 and f_ic <= 0.3:
+                    ### here we append f_ic to construct total HOD parameters
+                    hod_params_alive.append(list(curr_hod_params)+[f_ic])
+                else:
+                    continue
             elif self.config.model != 0:
                 raise NotImplementedError(
                     "HOD parameter sampling is not implemented for "
@@ -565,11 +565,12 @@ class ShearAssigner:
             array_list_output.append(iarray[select])
         return tuple(array_list_output)
     
-    def gen_gal_positions(self, ngal:float, survey_name:str, tomo_label:int, survey_label:int):
+    def gen_gal_positions(self, ngal:float, survey_name:str, tomo_label:int, survey_label:int, zmax:float=None, seed_Phz:int=None):
         mask = self.masks[survey_name]
         mask_type = self._guess_mask_type(mask)
         sigma_phz = self.config.sigma_phz
-        seed_Phz = self.config.seed_Phz
+        if seed_Phz is None:
+            seed_Phz = self.config.seed_Phz_ini
         nofz = self.nofzs[f'tomo{tomo_label}']
 
         match mask_type:
@@ -579,7 +580,7 @@ class ShearAssigner:
                 cat_ra, cat_dec = gen_angle_positions_from_mangle(ngal, mask)
 
         Ngal_curr = len(cat_ra)
-        cat_z, cat_zph = gen_redshifts_from_nofz(Ngal_curr, nofz, photo_z_err=sigma_phz, seed=seed_Phz)
+        cat_z, cat_zph = gen_redshifts_from_nofz(Ngal_curr, nofz, photo_z_err=sigma_phz, seed=seed_Phz, zmax=zmax)
         Ngal_curr = len(cat_z)
         cat_ra, cat_dec = self._downsample_array([cat_ra, cat_dec], Ngal_curr)
 
@@ -594,9 +595,10 @@ class ShearAssigner:
 
         return bg_galcat
     
-    def assign_shear(self, bg_galcat:np.ndarray, shear_map_dict:list):
+    def assign_shear(self, bg_galcat:np.ndarray, shear_map_dict:list, seed_SN:int=None):
         sigma_e = self.config.sigma_e
-        seed_SN = self.config.seed_SN
+        if seed_SN is None:
+            seed_SN = self.config.seed_SN_ini
         g1_pure, g2_pure, g1_noise, g2_noise = assign_shear_vals(bg_galcat['ra'], bg_galcat['dec'], bg_galcat['z_true'], shear_map_dict, sigma_e, seed_SN)
 
         bg_galcat['g1'] = g1_noise

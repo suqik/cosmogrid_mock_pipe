@@ -74,7 +74,7 @@ if __name__ == "__main__":
         z_space = False, ## RSD in box. Note if need RSD in survey-like, do not open this.
 
         ### HOD param sampling
-        param_prior_low  = np.array([13, 0.1, 13, 0.00, 0.0]),
+        param_prior_low  = np.array([12.0, 0.1, 13, 0.00, 0.0]),
         param_prior_high = np.array([13.6, 0.6, 15.0, 10.0, 1.5]),
 
         ### lightcone redshift range
@@ -88,16 +88,16 @@ if __name__ == "__main__":
     )
 
     cosmo_par_fname = (
-        "/Users/suqikuai777/Dataspace/FastPM/Cosmology/cosmo_list.txt"
+        "/public/home/suchen/Programs/Simtool/Pipeline/"
+        "cfgs/fiducial/cosmo_list.txt"
     )
     halo_fmt = (
-        "/Users/suqikuai777/Dataspace/FastPM/Cosmology/"
+        "/public/share/ace66so15x/suchen/FastPM/Cosmology/"
         "L1000_N1024_1000cosmo/cosmo{:d}/"
-        "a_{:5.4f}/rstar/out_0_wPID.list"
+        "a_{:5.4f}/rstar/out_0_wsub.list"
     )
-    hod_samples_output = Path(
-        "/Users/suqikuai777/Dataspace/FastPM/MockCatalogs/"
-        "cfgs/hod/cosmo_hod_pairs.json"
+    hod_samples_output = Path(__file__).resolve().parent / (
+        "cosmo_hod_pairs.json"
     )
 
     from mpi4py import MPI
@@ -137,9 +137,11 @@ if __name__ == "__main__":
 
         logger.info(f"Rank {rank}: start processing cosmo_{icosmo:06d}")
 
-        hod_params_alive = fastpm_runner.sample_hod_params(icosmo, 0)
-
-        cosmo_hod_pairs_local[f'cosmo_{icosmo:06d}'] = get_hod_params_container(hod_params_alive)
+        try:
+            hod_params_alive = fastpm_runner.sample_hod_params(icosmo, 0)
+            cosmo_hod_pairs_local[f'cosmo_{icosmo:06d}'] = get_hod_params_container(hod_params_alive)
+        except Exception as err:
+            logger.error(f"Rank {rank}: cosmo_{icosmo:06d} failed: {err}")
 
     logger.info(f"Rank {rank} finished.")
 

@@ -1,7 +1,6 @@
-''' Script to generate FastPM mock shape catalogs '''
+''' Test FastPM mock shape catalog on a single cosmology '''
 
 import os
-import json
 import sys
 from pathlib import Path
 
@@ -10,42 +9,15 @@ if __package__ in (None, ""):
 
 import numpy as np
 from loguru import logger
+from astropy.table import Table
 
 from handler import PipeConfig
 from runner import FastPMRunner
 
-def divide_MPI_chunks(data, size):
-    k, m = divmod(len(data), size)
-    chunks = [data[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] for i in range(size)]
-    return chunks
-
-def get_cosmo_labels_processed(fname:str):
-    '''
-    Read cosmo labels from hod param json file.
-    '''
-
-    cosmo_hod_info = load_hod_samples(fname)
-
-    cosmo_labels = []
-    for icosmo_str in cosmo_hod_info.keys():
-        cosmo_labels.append(int(icosmo_str[6:]))
-
-    return cosmo_labels
-
-def load_hod_samples(fname:str):
-    '''
-    Load (cosmo_label, hod_params) pairs.
-    '''
-
-    if not os.path.isdir(os.path.dirname(fname)):
-        raise FileNotFoundError(f"Dictionary {os.path.dirname(fname)} not found !")
-
-    with open(fname, "r") as f:
-        cosmo_hod_pairs = json.load(f)
-
-    return cosmo_hod_pairs
-
 if __name__ == "__main__":
+
+    icosmo = int(sys.argv[1]) if len(sys.argv) > 1 else 1
+
     fastpm_config = PipeConfig(
         ### fixed siminfo
         Lbox = 1000.0,
@@ -59,7 +31,7 @@ if __name__ == "__main__":
         verbose = True,
         num_seeds = 1,
         init_seed = 33000, ## initial seed for generating galaxy catalog
-        ngal_ref = 4e-4,
+        ngal_ref = 3.5e-4,
         z_space = False, ## RSD in box. Note if need RSD in survey-like, do not open this.
 
         ### HOD param sampling
@@ -67,8 +39,8 @@ if __name__ == "__main__":
         param_prior_high = np.array([13.6, 0.6, 15.0, 10.0, 1.5]),
 
         ### lightcone redshift range
-        zmin_lightcone = 0.4,
-        zmax_lightcone = 0.6,
+        zmin_lightcone = 0.2,
+        zmax_lightcone = 0.4,
         ctr_lightcone = [0,0,0],
         rsd_lightcone = True,
 
@@ -116,37 +88,12 @@ if __name__ == "__main__":
                              'tomo4': back_nofz_ffmt.format(4),
                              'tomo5': back_nofz_ffmt.format(5)}
 
-    cosmo_hod_file = (
-        "/public/home/suchen/Programs/cosmogrid_mock_pipe/"
-        "fastpm_runs/cosmo_hod_pairs.json"
-    )
     shapecone_fmt = (
         "/public/share/ace66so15x/suchen/FastPM/MockCatalogs/Shapes/"
         "cosmo_{:06d}_realization_{:04d}_kids1000_north_3tomos.fits"
     )
 
-    from mpi4py import MPI
-    comm = MPI.COMM_WORLD
-    rank = comm.Get_rank()
-    size = comm.Get_size()
-
-    if rank == 0:
-
-        logger.info("Read cosmo labels")
-
-        cosmo_labels_global = get_cosmo_labels_processed(cosmo_hod_file)
-
-        chunks = divide_MPI_chunks(cosmo_labels_global, size)
-        Path(shapecone_fmt).parent.mkdir(parents=True, exist_ok=True)
-
-    else:
-        chunks = None
-
-    if rank == 0:
-
-        logger.info("Scattering labels")
-
-    cosmo_labels_local = comm.scatter(chunks, root=0)
+    Path(shapecone_fmt).parent.mkdir(parents=True, exist_ok=True)
 
     fastpm_runner = FastPMRunner.build_shape_runner(
         config=fastpm_config,
@@ -160,21 +107,29 @@ if __name__ == "__main__":
         shear_ofmt=shapecone_fmt,
     )
 
-    ### User-directed: only use realization 2 shear maps
-    rlzs = (2,)
+    result = fastpm_runner.gen_mock_shear(
+        icosmo=icosmo,
+        irlz=0,
+        save=True,
+    )
 
-    ### Loop from cosmo_labels
-    for icosmo in cosmo_labels_local:
+    logger.info(f"total galaxies: {len(result)}")
+    for tomo_label in (3, 4, 5):
+        sel = result[result["tomo"] == tomo_label]
+        dz = sel["z"] - sel["z_true"]
+        logger.info(
+            f"  tomo{tomo_label}: {len(sel)} galaxies, "
+            f"z_true mean {sel['z_true'].mean():.3f}, "
+            f"photo-z scatter (z-z_true) std {dz.std():.4f} "
+            f"(sigma_phz={fastpm_config.sigma_phz})"
+        )
+    g1n = result["g1"]; g1p = result["g1_pure"]
+    noise = g1n - g1p
+    logger.info(
+        f"shape noise: std(g1 - g1_pure) = {noise.std():.4f} "
+        f"(sigma_e={fastpm_config.sigma_e}), "
+        f"pure shear std = {g1p.std():.4f}"
+    )
 
-        logger.info(f"Rank {rank}: start processing cosmo_{icosmo:06d}")
-
-        for irlz in rlzs:
-
-            try:
-                _ = fastpm_runner.gen_mock_shear(
-                    icosmo=icosmo,
-                    irlz=irlz,
-                    save=True,
-                )
-            except Exception as err:
-                logger.error(f"Rank {rank}: cosmo_{icosmo:06d} irlz={irlz} failed: {err}")
+    out_fname = shapecone_fmt.format(icosmo, 0)
+    logger.info(f"saved to {out_fname} ({os.path.getsize(out_fname)/1e6:.1f} MB)")

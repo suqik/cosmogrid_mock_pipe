@@ -78,19 +78,21 @@ if __name__ == "__main__":
         dive_exec_path = "/home/suchen/applications/DIVE/DIVE",
 
         sigma_e = 0.3,
-        seed_SN = 0,
+        seed_SN_ini = 0,
         sigma_phz = 0.01,
-        seed_Phz = 26120,
+        seed_Phz_ini = 26120,
     )
 
-    sim_fmt = "/data3/suchen/CosmoGridV1/grid/cosmo_{:06d}/run_{:d}/"
-    halo_fmt = "pkd_halos/CosmoML.{:05d}.fofstats.0"
-    shear_sim_fmt = "/data3/suchen/CosmoGridV1/raytrace/cosmo_{:06d}/nside0512/raytracing_z{:.2f}_nufft.hdf5"
-    lb_z_file = "/data3/suchen/CosmoGridV1/grid_info/label_z_table.txt"
+    wdir = "/public/share/ace66so15x/suchen/CosmoGrid"
 
-    wdir = "/home/suchen/Program/CosmoGrid"
-    mask_dirbase = f"{wdir}/catalogs/masks"
-    nofz_dirbase = f"{wdir}/catalogs/NOfZ"
+    sim_fmt = None
+    halo_fmt = None
+    shear_sim_dir = "/public/share/ace66so15x/dingjch/CosmoGridV1/raytracing_withoutbaryon"
+    shear_sim_fmt = shear_sim_dir + "/cosmo_{:06d}/nside0512/raytracing_z{:.2f}_nufft.hdf5"
+    lb_z_file = f"{wdir}/label_z_table.txt"
+
+    mask_dirbase = f"{wdir}/masks"
+    nofz_dirbase = f"{wdir}/NOfZ"
 
     ### Geometry & masks
     mask_boss_fdir = f"{mask_dirbase}/boss_geom/"
@@ -112,13 +114,14 @@ if __name__ == "__main__":
     }
 
     ### N of Z
-    nz_fbase = f"{nofz_dirbase}/lens/"
+    nz_boss_fdir = f"{nofz_dirbase}/boss_nofzs/"
+    nz_2dflens_fdir = f"{nofz_dirbase}/2dflens_nofzs/"
     fore_nofz_fnames_dict = {
-        # 'boss_lowz_ngc': nz_fbase + "nbar_DR12v5_LOWZ_North_om0p31_Pfkp10000.dat",
-        # 'boss_lowze2_ngc': nz_fbase + "nbar_DR12v5_LOWZE2_North_om0p31_Pfkp10000.dat",
-        # 'boss_lowze3_ngc': nz_fbase + "nbar_DR12v5_LOWZE3_North_om0p31_Pfkp10000.dat",
-        'boss_cmass_ngc': nz_fbase + "nbar_DR12v5_CMASS_North_om0p31_Pfkp10000.dat",
-        '2dflens_south': nz_fbase + "nbar_2dFLens_south_data.dat"
+        # 'boss_lowz_ngc': nz_boss_fdir + "nbar_DR12v5_LOWZ_North_om0p31_Pfkp10000.dat",
+        # 'boss_lowze2_ngc': nz_boss_fdir + "nbar_DR12v5_LOWZE2_North_om0p31_Pfkp10000.dat",
+        # 'boss_lowze3_ngc': nz_boss_fdir + "nbar_DR12v5_LOWZE3_North_om0p31_Pfkp10000.dat",
+        'boss_cmass_ngc': nz_boss_fdir + "nbar_DR12v5_CMASS_North_om0p31_Pfkp10000.dat",
+        '2dflens_south': nz_2dflens_fdir + "nbar_2dFLens_south_data.dat"
     }
 
     ### survey labels
@@ -133,7 +136,7 @@ if __name__ == "__main__":
     redshift_src_list = np.concatenate([np.arange(0.1,1.0,0.05), np.arange(1.0, 2.0, 0.1), np.array([2.0,2.2,2.4,2.8,3.2,3.6])])
 
     back_mask_fnames_dict = {
-        # 'KiDS1000-North': f"{mask_dirbase}/mask_KiDS_North_1024.fits",
+        # 'KiDS1000-North': f"{mask_dirbase}/kids1000_geom/mask_KiDS_North_1024.fits",
         'boss_cmass_ngc': f"{mask_dirbase}/boss_geom/mask_DR12v5_CMASS_North.ply"
     }
 
@@ -145,7 +148,7 @@ if __name__ == "__main__":
     tomo_name_list = ['tomo{}'.format(i) for i in range(1,6)]
     ngal_list = [0.62, 1.18, 1.85, 1.26, 1.31]
     tomo_label_list = np.arange(5) + 1
-    back_nofz_ffmt = nofz_dirbase + "/srcs/K1000_NS_V1.0.0A_ugriZYJHKs_photoz_SG_mask_LF_svn_309c_2Dbins_v2_SOMcols_Fid_blindC_TOMO{}_Nz.asc"
+    back_nofz_ffmt = nofz_dirbase + "/kids1000_nofzs/K1000_NS_V1.0.0A_ugriZYJHKs_photoz_SG_mask_LF_svn_309c_2Dbins_v2_SOMcols_Fid_blindC_TOMO{}_Nz.asc"
     back_nofz_fnames = [back_nofz_ffmt.format(i) for i in range(1, 6)]
 
     # back_ngals_dict = dict(zip(tomo_name_list, ngal_list))
@@ -159,8 +162,8 @@ if __name__ == "__main__":
     back_nofz_fnames_dict = {'tomo4': back_nofz_ffmt.format(4),
                             'tomo5': back_nofz_ffmt.format(5)}
 
-    cosmo_hod_file = f"{wdir}/cfgs/hod/hod_5params_dict_free_ngal_cmass_v2.json"
-    shapecone_dir = "/data2/suchen/CosmoGrid/Shape/boss_ngc_2tomos"
+    cosmo_hod_file = f"{wdir}/hod_jsons/hod_5params_dict_free_ngal_cmass_v2.json"
+    shapecone_dir = f"{wdir}/Shape/boss_ngc_2tomos"
     shapecone_fmt = shapecone_dir + "/cosmo_{:06d}_run_0_boss_north_2tomos.fits"
 
     from mpi4py import MPI

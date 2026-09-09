@@ -1,7 +1,7 @@
-''' Script to generate FastPM mock galaxy catalogs '''
+''' Test FastPM mock galaxy generation on a single cosmology and HOD '''
 
-import os
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -14,38 +14,11 @@ from loguru import logger
 from handler import PipeConfig
 from runner import FastPMRunner
 
-def divide_MPI_chunks(data, size):
-    k, m = divmod(len(data), size)
-    chunks = [data[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] for i in range(size)]
-    return chunks
-
-def get_cosmo_labels_processed(fname:str):
-    '''
-    Read cosmo labels from hod param json file.
-    '''
-
-    cosmo_hod_info = load_hod_samples(fname)
-
-    cosmo_labels = []
-    for icosmo_str in cosmo_hod_info.keys():
-        cosmo_labels.append(int(icosmo_str[6:]))
-
-    return cosmo_labels
-
-def load_hod_samples(fname:str):
-    '''
-    Load (cosmo_label, hod_params) pairs.
-    '''
-
-    if not os.path.isdir(os.path.dirname(fname)):
-        raise FileNotFoundError(f"Dictionary {os.path.dirname(fname)} not found !")
-
-    with open(fname, "r") as f:
-        cosmo_hod_pairs = json.load(f)
-
-    return cosmo_hod_pairs
-
 if __name__ == "__main__":
+
+    icosmo = int(sys.argv[1]) if len(sys.argv) > 1 else 1
+    ihod = int(sys.argv[2]) if len(sys.argv) > 2 else 0
+
     fastpm_config = PipeConfig(
         ### fixed siminfo
         Lbox = 1000.0,
@@ -133,30 +106,13 @@ if __name__ == "__main__":
         "boss_lowz_north_2dflens_south.fits"
     )
 
-    from mpi4py import MPI
-    comm = MPI.COMM_WORLD
-    rank = comm.Get_rank()
-    size = comm.Get_size()
+    with open(cosmo_hod_file, "r") as f:
+        cosmo_hod_pairs = json.load(f)
 
-    if rank == 0:
+    hod_params = cosmo_hod_pairs[f'cosmo_{icosmo:06d}'][f'HOD{ihod}']
+    logger.info(f"cosmo{icosmo} HOD{ihod} params: {hod_params}")
 
-        logger.info("Read cosmo labels")
-
-        cosmo_labels_global = get_cosmo_labels_processed(cosmo_hod_file)
-
-        chunks = divide_MPI_chunks(cosmo_labels_global, size)
-        Path(galcone_fmt).parent.mkdir(parents=True, exist_ok=True)
-
-    else:
-        chunks = None
-
-    if rank == 0:
-
-        logger.info("Scattering labels")
-
-    cosmo_labels_local = comm.scatter(chunks, root=0)
-
-    cosmo_hod_pairs = load_hod_samples(cosmo_hod_file)
+    Path(galcone_fmt).parent.mkdir(parents=True, exist_ok=True)
 
     fastpm_runner = FastPMRunner.build_gal_runner(
         config=fastpm_config,
@@ -168,22 +124,15 @@ if __name__ == "__main__":
         gal_ofmt=galcone_fmt,
     )
 
-    NHOD_PER_COSMO = fastpm_runner.config.nhod_per_cosmo
-    NRLZS_PER_COSMO = fastpm_runner.config.nrlzs_per_cosmo
+    result = fastpm_runner.gen_mock_gal(
+        icosmo, irlz=0, ihod=ihod, ihod_param=hod_params, save=True
+    )
 
-    ### Loop from cosmo_labels
-    for icosmo in cosmo_labels_local:
+    n_total = len(result)
+    logger.info(f"total galaxies: {n_total}")
+    for survey_name, survey_label in survey_labels_dict.items():
+        n_survey = np.count_nonzero(result["survey"] == survey_label)
+        logger.info(f"  {survey_name}: {n_survey} galaxies")
 
-        logger.info(f"Rank {rank}: start processing cosmo_{icosmo:06d}")
-
-        curr_hod_params_dict = cosmo_hod_pairs[f'cosmo_{icosmo:06d}']
-
-        for irlz in range(NRLZS_PER_COSMO):
-
-            for ihod in range(NHOD_PER_COSMO):
-
-                curr_hod_param = curr_hod_params_dict[f'HOD{ihod}']
-                try:
-                    _ = fastpm_runner.gen_mock_gal(icosmo, irlz=irlz, ihod=ihod, ihod_param=curr_hod_param, save=True)
-                except Exception as err:
-                    logger.error(f"Rank {rank}: cosmo_{icosmo:06d} irlz={irlz} ihod={ihod} failed: {err}")
+    out_fname = galcone_fmt.format(icosmo, 0, ihod)
+    logger.info(f"saved to {out_fname} ({os.path.getsize(out_fname)/1e6:.1f} MB)")

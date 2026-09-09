@@ -61,12 +61,30 @@ def get_HMF(mass, bins, boxsize, isedge=False, bin_scale='linear', ifcum=True):
 # >>>=============================================================================<<<
 
 # >>>===========================   HOD help functions   ==========================<<<
+def compute_HMF(halo_mass, Lbox, nMbin=30):
+    '''
+    Precompute the halo mass function for a given halo catalog.
+    Independent of HOD parameters, so it can be reused across draws.
+    '''
+    Mmin = halo_mass.min()
+    Mmax = halo_mass.max()
+
+    dlgM = np.log10(Mmax/Mmin)/(nMbin-1)
+    Mbin_edges = np.logspace(np.log10(Mmin)-dlgM, np.log10(Mmax)+dlgM, nMbin)
+
+    massbin, NM = get_HMF(halo_mass, Mbin_edges, boxsize=Lbox, isedge=True, bin_scale='log', ifcum=False)
+    return massbin, NM
+
+
 def get_ngal(
         halo_mass, Lbox, redshift,
-        model_lb, model_params_names, hod_param_vals, 
+        model_lb, model_params_names, hod_param_vals,
+        massbin=None, NM=None,
         ):
     '''
     Calculate theoretical predictions of ngal given HMF.
+    If massbin and NM are provided, skip recomputing the HMF
+    (useful when calling repeatedly for many HOD parameter draws).
     '''
     if isinstance(hod_param_vals, list) or isinstance(hod_param_vals, np.ndarray):
         model_params_dict = dict(zip(model_params_names, hod_param_vals))
@@ -75,14 +93,8 @@ def get_ngal(
     else:
         raise ValueError("hod_param_vals should be list or dict")
 
-    Mmin = halo_mass.min()
-    Mmax = halo_mass.max()
-
-    nMbin = 30
-    dlgM = np.log10(Mmax/Mmin)/(nMbin-1)
-    Mbin_edges = np.logspace(np.log10(Mmin)-dlgM, np.log10(Mmax)+dlgM, nMbin)
-
-    massbin, NM = get_HMF(halo_mass, Mbin_edges, boxsize=Lbox, isedge=True, bin_scale='log', ifcum=False)
+    if massbin is None or NM is None:
+        massbin, NM = compute_HMF(halo_mass, Lbox)
 
     tmp_dict = model_params_dict.copy()
     tmp_dict['fic'] = 1.0
