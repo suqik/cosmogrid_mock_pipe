@@ -1,20 +1,23 @@
 import numpy as np
+import sys
 import os
 import json
 
 from container import *
 from calculator import *
 
-data_dirbase = "/data2/suchen/CosmoGrid"
+part = int(sys.argv[1])
 
-lens_dir = f"{data_dirbase}/Free_NGAL_wrsd/HOD_cmass/grid/Gals"
+data_dirbase = "/public/share/ace66so15x/suchen/CosmoGrid"
+
+lens_dir = f"{data_dirbase}/Free_NGAL_wrsd/HOD_cmass/Gals"
 lens_fmt = "cosmo_{:06d}_run_0_HOD_{}_run_0_boss_north_2dflens_south.fits"
 rand_dir = f"{data_dirbase}/Rand/DS20"
 srcs_dir = f"{data_dirbase}/Shape/kids1000_north_2tomos"
 srcs_fmt = "cosmo_{:06d}_run_0_kids_north_2tomos.fits"
-out_fmt = "./results/ggl/boss_ngc_kids1000_2tomos/cosmo{:06d}_HOD{:d}_ggl.fits"
+out_fmt = "./results/ggl/boss_ngc_kids1000_2tomos_wSN/cosmo{:06d}_HOD{:d}_ggl.fits"
 
-with open("/data3/suchen/CosmoGridV1/grid_info/cosmo_label_param.json", "r") as f:
+with open(f"{data_dirbase}/cosmo_label_param.json", "r") as f:
     cosmo_param_info = json.load(f)
 
 def get_cosmo_dict(icosmo, cosmo_param_info):
@@ -25,7 +28,10 @@ def get_cosmo_dict(icosmo, cosmo_param_info):
     cosmo_dict['w0'] = curr_info['w']
     return cosmo_dict
 
-cosmo_labels = [1]
+cosmo_labels = []
+with open("./cosmo_label_groups/part_{:02d}".format(part)) as f:
+    for ilabel in f.readlines():
+        cosmo_labels.append(int(ilabel.strip("\n").split("_")[1]))
 
 ggl_config = GGLConfig(
     rp_min=1.0,
@@ -34,8 +40,8 @@ ggl_config = GGLConfig(
     rp_unit='mpc_h',
     bin_type='log',
     flip_g1=True,
-    wRSD=False, # for void lensing, should always be False
-    wSN=False,
+    wRSD=True, # for void lensing, should always be False
+    wSN=True,
     wPhZ=False
 )
 
@@ -49,7 +55,7 @@ for idx, icosmo in enumerate(cosmo_labels):
     if idx == 0:
         mock_rand_boss_matched = mock_rand_boss.match_to_reference(mock_shape_kids, nside=256, in_place=False)
 
-    for ihod in range(2):
+    for ihod in range(10):
         mock_gal = SurveyData.load_cosmogrid_galaxy(os.path.join(lens_dir, lens_fmt.format(icosmo, ihod)))
         mock_gal_boss = mock_gal[mock_gal.survey != 3]
 
