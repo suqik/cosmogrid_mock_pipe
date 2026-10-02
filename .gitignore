@@ -22,3 +22,5 @@ measurements/*.ipynb
 cfgs/.old/
 cfgs/fcfc*
 submit.sh
+measurements/fastpm_related
+extras/
