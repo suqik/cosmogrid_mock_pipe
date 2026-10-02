@@ -1626,6 +1626,33 @@ class AbacusRunner:
                 mask = loadFitsMaps(mask_fname)
                 mask = mask[0]
                 mask = np.where(mask > 0, 1, 0)
+            elif survey_name == "DES-Y3":
+                with fits.open(mask_fname, memmap=True) as hdus:
+                    if len(hdus) < 2 or not isinstance(
+                            hdus[1], fits.BinTableHDU):
+                        raise ValueError(
+                            f"{mask_fname} must contain a binary table"
+                        )
+                    header = hdus[1].header
+                    if header.get("PIXTYPE", "").strip() != "HEALPIX":
+                        raise ValueError(f"{mask_fname} is not a HEALPix map")
+                    if header.get("COORDSYS", "").strip() != "C":
+                        raise ValueError(
+                            f"{mask_fname} must use celestial coordinates"
+                        )
+                    if "SCIENCE" not in hdus[1].columns.names:
+                        raise ValueError(
+                            f"{mask_fname} must contain a SCIENCE column"
+                        )
+                    ordering = header.get("ORDERING", "").strip()
+                    mask = np.array(hdus[1].data["SCIENCE"]).reshape(-1)
+                if ordering == "NESTED":
+                    mask = hp.reorder(mask, n2r=True)
+                elif ordering != "RING":
+                    raise ValueError(
+                        f"{mask_fname} uses unsupported {ordering} ordering"
+                    )
+                mask = np.where(mask > 0, 1, 0).astype(np.uint8)
             elif survey_name == "FullSky":
                 nside = 1024
                 mask = np.ones(12 * nside * nside)
@@ -1641,7 +1668,14 @@ class AbacusRunner:
     def _prepare_back_nofzs(self, nofz_fnames):
         nofzs = {}
         for tomo_name, nofz_fname in nofz_fnames.items():
-            tmp = np.loadtxt(nofz_fname)
+            with open(nofz_fname, "r") as stream:
+                first_row = stream.readline().split()
+            skiprows = 1 if len(first_row) != 2 else 0
+            tmp = np.loadtxt(nofz_fname, skiprows=skiprows, ndmin=2)
+            if tmp.shape[1] != 2:
+                raise ValueError(
+                    f"{nofz_fname} must contain redshift and n(z) columns"
+                )
             nofzs[tomo_name] = make_nofz(tmp[:, 0], tmp[:, 1])
         return nofzs
 

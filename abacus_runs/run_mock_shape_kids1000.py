@@ -49,13 +49,14 @@ if __name__ == "__main__":
         seed_SN = 0,
         sigma_phz = 0.01,
         seed_Phz = 26120,
+        seed_pos = 0,
     )
 
-    shear_map_fmt = "/data2/suchen/Abacus/shear_maps/gamma{:d}_rt_z{:.2f}.fits"
+    shear_map_fmt = "/Volumes/Elements/Abacus_Mock/gamma{:d}_rt_z{:.2f}.fits"
 
-    wdir = "/home/suchen/Program/CosmoGrid"
-    mask_dirbase = f"{wdir}/catalogs/masks"
-    nofz_dirbase = f"{wdir}/catalogs/NOfZ"
+    extras_dir = Path(__file__).resolve().parents[1] / "extras"
+    mask_dirbase = extras_dir / "masks"
+    nofz_dirbase = extras_dir / "NOfZ"
 
     ### background survey: KiDS1000-North, 5 tomographic bins
     back_mask_fnames_dict = {
@@ -92,13 +93,13 @@ if __name__ == "__main__":
         1.65, 1.70, 1.75, 1.80, 1.85, 1.90, 1.95, 2.00,
     ]
 
-    ### source clustering: mass maps & shell correspondence (test version)
-    mass_map_fmt = "/data2/suchen/Abacus/mass_maps/shell_{:d}.fits"
-    z_to_mass_label = {z: (12 if z < 0.5 else 13) for z in redshift_src_list}
-    position_method = "density"  # "random" or "density"
+    ### Uniform angular positions within the survey mask.
+    mass_map_fmt = None
+    z_to_mass_label = None
+    position_method = "random"  # "random" or "density"
     bias = 1.0
 
-    shape_ofmt = "/data2/suchen/Abacus/shape_cats/abacus_run_0_kids_north_5tomos_density.fits"
+    shape_ofmt = "/Users/suqikuai777/Dataspace/Abacus_Mock/abacus_run_0_kids_north_5tomos_uniform.fits"
 
     abacus_runner = AbacusRunner.build_shape_runner(
         config=cosmogridV1_config,
