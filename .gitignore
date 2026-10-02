@@ -24,3 +24,7 @@ cfgs/fcfc*
 submit.sh
 measurements/fastpm_related
 extras/
+fastpm_runs/figs
+fastpm_runs/scripts
+fastpm_runs/tests
+fastpm_runs/cosmo_hod_pairs.json
