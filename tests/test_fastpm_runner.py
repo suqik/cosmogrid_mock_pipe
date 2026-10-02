@@ -1108,3 +1108,21 @@ class FastPMRunnerCoreTests(unittest.TestCase):
         with patch.object(runner_module.hp, "nside2npix", return_value=12):
             with self.assertRaisesRegex(ValueError, "FullSky"):
                 self.runner._prepare_back_masks({"FullSky": None})
+
+    def test_fastpm_background_masks_load_boss_geometry(self):
+        boss_paths = {
+            "boss_lowz_ngc": str(self.root / "lowz.ply"),
+            "boss_lowze2_ngc": str(self.root / "lowze2.ply"),
+            "boss_lowze3_ngc": str(self.root / "lowze3.ply"),
+        }
+
+        with patch.object(runner_module.pymangle, "Mangle") as mangle_cls:
+            masks = self.runner._prepare_back_masks(boss_paths)
+
+        self.assertEqual(
+            [call.args[0] for call in mangle_cls.call_args_list],
+            list(boss_paths.values()),
+        )
+        self.assertEqual(set(masks), set(boss_paths))
+        for survey_name in boss_paths:
+            self.assertIs(masks[survey_name], mangle_cls.return_value)

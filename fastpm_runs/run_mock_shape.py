@@ -1,4 +1,5 @@
-''' Script to generate FastPM mock shape catalogs '''
+''' Script to generate FastPM mock shape catalogs
+(BOSS LOWZ/LOWZE2/LOWZE3 NGC geometry + KiDS-1000 North n(z)) '''
 
 import os
 import json
@@ -97,11 +98,15 @@ if __name__ == "__main__":
     nofz_dirbase = f"{wdir}/NOfZ"
 
     back_mask_fnames_dict = {
-        'KiDS1000-North': f"{mask_dirbase}/kids1000_geom/mask_KiDS_North_1024.fits"
+        'boss_lowz_ngc': f"{mask_dirbase}/boss_geom/mask_DR12v5_LOWZ_North.ply",
+        'boss_lowze2_ngc': f"{mask_dirbase}/boss_geom/mask_DR12v5_LOWZE2_North.ply",
+        'boss_lowze3_ngc': f"{mask_dirbase}/boss_geom/mask_DR12v5_LOWZE3_North.ply"
     }
 
     back_survey_labels_dict = {
-        'KiDS1000-North': 0
+        'boss_lowz_ngc': 0,
+        'boss_lowze2_ngc': 1,
+        'boss_lowze3_ngc': 2
     }
 
     back_nofz_ffmt = nofz_dirbase + "/kids1000_nofzs/K1000_NS_V1.0.0A_ugriZYJHKs_photoz_SG_mask_LF_svn_309c_2Dbins_v2_SOMcols_Fid_blindC_TOMO{}_Nz.asc"
@@ -122,7 +127,7 @@ if __name__ == "__main__":
     )
     shapecone_fmt = (
         "/public/share/ace66so15x/suchen/FastPM/MockCatalogs/Shapes/"
-        "cosmo_{:06d}_realization_{:04d}_kids1000_north_3tomos.fits"
+        "cosmo_{:06d}_realization_{:04d}_boss_lowz_e2_e3_north_3tomos.fits"
     )
 
     from mpi4py import MPI

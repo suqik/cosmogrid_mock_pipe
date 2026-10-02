@@ -971,7 +971,9 @@ class FastPMRunner:
                 with fits.open(mask_fname) as hdus:
                     mask = np.array(hdus[1].data["VALUE"]).flatten()
                 mask = np.where(mask > 0, 1, 0)
-            elif survey_name == "boss_cmass_ngc":
+            elif survey_name in {
+                    "boss_cmass_ngc", "boss_lowz_ngc",
+                    "boss_lowze2_ngc", "boss_lowze3_ngc"}:
                 mask = pymangle.Mangle(mask_fname)
             else:
                 raise ValueError(
