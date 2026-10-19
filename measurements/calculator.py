@@ -1,13 +1,74 @@
 import numpy as np
 from loguru import logger
 from astropy.cosmology import FlatwCDM
+from astropy import units as u
+from astropy.cosmology import units as cu
 from dsigma.precompute import precompute
 
 from dsigma.stacking import excess_surface_density
 from dsigma.jackknife import compute_jackknife_fields, jackknife_resampling
 
+import treecorr
+
 from container import *
 from dataclasses import dataclass
+
+@dataclass
+class Ang2PTConfig:
+    theta_min: float
+    theta_max: float
+    theta_bins: int
+    theta_unit: str = "arcmin"
+    bin_type: str = "log"
+    flip_g1: bool = False
+    flip_g2: bool = False
+    wRSD: bool = False
+    wSN: bool = False
+    wPhz: bool = False
+
+class Ang2PTCalculator:
+    def __init__(self, config:Ang2PTConfig):
+        self.config = config
+    
+    def _thetas_to_arcmin(self):
+        theta_unit = self.config.theta_unit
+        theta_min_ori = self.config.theta_min
+        theta_max_ori = self.config.theta_max
+
+        match theta_unit.lower():
+            case 'arcmin':
+                factor = 1.0
+
+        theta_min_arcmin = theta_min_ori * factor
+        theta_max_arcmin = theta_max_ori * factor
+
+        return theta_min_arcmin, theta_max_arcmin
+    
+    def mk_GG_cat(self, cat:SurveyData):
+        if not self.config.wSN:
+            g1input = cat.g1_pure
+            g2input = cat.g2_pure
+
+        tc_cat = treecorr.Catalog(
+            ra=cat.ra,
+            dec=cat.dec,
+            g1=g1input,
+            g2=g2input,
+            ra_units = 'degree',
+            dec_units = 'degree',
+            flip_g1=self.config.flip_g1,
+            flip_g2=self.config.flip_g2,
+            npatch=64
+        )
+
+        return tc_cat
+    
+    def compute_gg_auto(self, tc_cat:treecorr.Catalog):
+        min_sep, max_sep = self._thetas_to_arcmin()
+        gg = treecorr.GGCorrelation(min_sep=min_sep, max_sep=max_sep, nbins=self.config.theta_bins, sep_units='arcmin', var_method='jackknife')
+        gg.process(tc_cat)
+
+        return gg.rnom, gg.xip, gg.xim, gg.varxip, gg.varxim
 
 @dataclass
 class GGLConfig:
@@ -40,21 +101,37 @@ class GGLCalculator:
         rp_min_ori = self.config.rp_min
         rp_max_ori = self.config.rp_max
 
+        # match rp_unit.lower():
+        #     case 'mpc':
+        #         factor = 1.0
+        #     case 'mpc_h':
+        #         factor = 1. / hubble
+        #     case 'kpc':
+        #         factor = 1e-3
+        #     case 'kpc_h':
+        #         factor = 1e-3 / hubble
+        #     case 'gpc':
+        #         factor = 1e3
+        #     case 'gpc_h':
+        #         factor = 1e3 / hubble
+        #     case 'rv':
+        #         factor = Rvoid_mpch / hubble
+
         match rp_unit.lower():
             case 'mpc':
-                factor = 1.0
+                factor = hubble
             case 'mpc_h':
-                factor = 1. / hubble
+                factor = 1.
             case 'kpc':
-                factor = 1e-3
+                factor = 1e-3 * hubble
             case 'kpc_h':
-                factor = 1e-3 / hubble
+                factor = 1e-3
             case 'gpc':
-                factor = 1e3
+                factor = 1e3 * hubble
             case 'gpc_h':
-                factor = 1e3 / hubble
+                factor = 1e3
             case 'rv':
-                factor = Rvoid_mpch / hubble
+                factor = Rvoid_mpch
 
         rp_min_mpc = rp_min_ori * factor
         rp_max_mpc = rp_max_ori * factor
@@ -128,6 +205,7 @@ class GGLCalculator:
         
         cosmology = self.get_cosmo(cosmo_dict)
         hubble = cosmology.H(0).value / 100
+        self.Q_H0 = cosmology.H(0) # Quantity of H0, used in saving results
         if self.config.rp_unit == "Rv":
             self.Rv_mean_mpc = self.Rv_mean_mpch / hubble
             rp_edges_mpc = self.get_bin_edges(hubble, self.Rv_mean_mpch)
@@ -154,6 +232,14 @@ class GGLCalculator:
                                     return_table=True,
                                     **esd_kwargs
                                     )
+        
+        for key in esd.colnames:
+            if key[:2] == 'rp':
+                esd[key] = esd[key].to(u.Mpc, cu.with_H0(self.Q_H0))
+            if key[:2] == 'ds':
+                esd[key] = esd[key].to(u.Msun / u.pc**2, cu.with_H0(self.Q_H0))
+            if key != 'n_pairs':
+                esd[key].format = '.3f'
 
         if self.config.rp_unit == "Rv":
             esd['rp_min_Rv'] = esd['rp_min'] / self.Rv_mean_mpc
