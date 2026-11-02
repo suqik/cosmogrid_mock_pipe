@@ -7,7 +7,7 @@ version = "0.1.0"
 [tasks]
 
 [dependencies]
-numpy = "==1.26.0"
+numpy = ">=2.2.0"
 pyccl = ">=3.2,<4"
 healpy = ">=1.18.1,<2"
 jupyter = ">=1.1.1,<2"
