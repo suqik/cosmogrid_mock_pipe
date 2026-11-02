@@ -1,4 +1,6 @@
 import numpy as np
+import healpy as hp
+from _multiprocessing import SemLock
 from loguru import logger
 from astropy.cosmology import FlatwCDM
 from astropy import units as u
@@ -84,6 +86,7 @@ class GGLConfig:
     wPhZ: bool = False
     wSN: bool = False
     njk: int = 1
+    distance_threshold: int = 1
 
 class GGLCalculator:
     def __init__(self, config:GGLConfig):
@@ -202,7 +205,7 @@ class GGLCalculator:
     def compute_pairs(self, cosmo_dict:dict, 
                 lens_table:Table, srcs_table:Table,
                 n_jobs=32):
-        
+
         cosmology = self.get_cosmo(cosmo_dict)
         hubble = cosmology.H(0).value / 100
         self.Q_H0 = cosmology.H(0) # Quantity of H0, used in saving results
@@ -215,7 +218,7 @@ class GGLCalculator:
         logger.info("Precomputing lens-source pairs")
         precompute(lens_table, srcs_table, rp_edges_mpc, 
                    cosmology=cosmology, comoving=True,
-                   progress_bar=True, n_jobs=n_jobs)
+                   progress_bar=True, n_jobs=n_jobs, nside=256)
         
         lens_table = lens_table[np.sum(lens_table['sum 1'], axis=1) > 0]
 
@@ -252,10 +255,13 @@ class GGLCalculator:
         if njk <= 2:
             raise ValueError("Jackknife subsamples should be larger than 2!")
         centers = compute_jackknife_fields(
-            lens_table, njk, weights=np.sum(lens_table['sum 1'], axis=1))
+            lens_table, njk, weights=np.sum(lens_table['sum 1'], axis=1), 
+            distance_threshold=self.config.distance_threshold)
         
         if rand_table is not None:
-            compute_jackknife_fields(rand_table, centers)
+            compute_jackknife_fields(rand_table, centers, 
+            distance_threshold=self.config.distance_threshold)
+
             esd_kwargs = {'table_r': rand_table,
                           'random_subtraction': True}
         else:
@@ -273,3 +279,9 @@ class GGLCalculator:
                                       **esd_kwargs)
         
             return jk_cov
+        
+    def add_errorbar(self, esd, jk_cov):
+        esd['ds_err'] = np.sqrt(np.diag(jk_cov))
+        esd['ds_err'] = esd['ds_err'].to(u.Msun / u.pc**2, cu.with_H0(self.Q_H0))
+
+        return esd
