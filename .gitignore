@@ -29,3 +29,5 @@ fastpm_runs/scripts
 fastpm_runs/tests
 fastpm_runs/cosmo_hod_pairs.json
 abacus_runs/etc
+sandbox/
+.DS_store
